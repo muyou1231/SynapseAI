@@ -595,12 +595,6 @@ body {
 .ci-ico.bomb .ico { font-size: 16px; }
 .ci-ico.bomb.active { color: #ff4d4f; border-color: #ff4d4f; background: rgba(255,77,79,.12); }
 
-/* ④ 消息改写「已编辑」角标 */
-.edited-tag {
-    display: inline-block; margin-top: 4px; font-size: 11px; color: var(--text-3, #999);
-    background: var(--fill-2, #f0f0f0); border-radius: 4px; padding: 1px 6px; cursor: default;
-}
-
 /* ⑨ 消息炸弹倒计时环 */
 .bomb-ring {
     display: inline-flex; align-items: center; gap: 4px; margin-top: 4px;
@@ -610,20 +604,6 @@ body {
 .bomb-ring.defused { color: #07c160; background: rgba(7,193,96,.10); border-color: rgba(7,193,96,.4); }
 .bomb-left { font-variant-numeric: tabular-nums; font-weight: 600; }
 .bomb-exploded { filter: grayscale(.3); opacity: .8; }
-
-/* ④ 消息改写内联编辑器 */
-.msg-edit-box { padding: 6px 0; }
-.msg-edit-input {
-    width: 100%; box-sizing: border-box; border: 1px solid var(--border-2, #ddd);
-    border-radius: 8px; padding: 6px 8px; font: inherit; resize: vertical; background: var(--bg-1, #fff);
-    color: var(--text-1, #222);
-}
-.msg-edit-actions { display: flex; gap: 8px; margin-top: 6px; }
-.msg-edit-save, .msg-edit-cancel {
-    border: none; border-radius: 8px; padding: 5px 14px; cursor: pointer; font-size: 13px;
-}
-.msg-edit-save { background: var(--brand-grad, #07c160); color: #fff; }
-.msg-edit-cancel { background: var(--fill-2, #eee); color: var(--text-2, #555); }
 
 /* ① 时间胶囊面板 */
 .cap-create {

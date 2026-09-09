@@ -39,3 +39,8 @@ build/
 # Windows 残留垃圾文件
 /nul
 
+# JVM 崩溃转储
+hs_err_*.log
+hs_err_*.jfr
+
+

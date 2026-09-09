@@ -414,19 +414,12 @@ DELETE /admin/assistants/{id}              删除助手
 开启后自己阅读消息**不会**向对方触发「已读」回执（仅影响阅读回执，消息仍正常接收）。
 - 开关：`POST /api/setting/ghost-read` `{ enabled }`；查看：`GET /api/setting`
 
-### ④ 消息改写
-自己的文本消息可随时编辑：
-- 对方**未读**时静默替换（对方无感知）；
-- 对方**已读**后修改会打上「已编辑」角标，对方实时收到 `MESSAGE_UPDATED` 就地更新气泡。
-- 编辑：`PUT /api/message/{id}/edit` `{ content }`；历史：`GET /api/message/{id}/edit-history`
-- 可消耗积分隐藏「已编辑」标记：`POST /api/message/{id}/hide-edit-mark`
-
 ### ⑨ 消息炸弹
 仅单聊文本消息可用。发送时装填炸弹（默认 30 秒倒计时），对方须在倒计时内**回复**才能拆弹；超时未回复则自动引爆，原消息内容被替换为占位文案，双方收到 `BOMB_EXPLODED` 推送。
 - 前端：聊天输入框的 💣 按钮装填/取消，下一条文本消息即挂上炸弹。
 
 ### ⑪ 聊天挖矿 + 亲密度
-- 发消息得积分（每日有上限），积分可在部分场景消耗（如隐藏「已编辑」标记）。
+- 发消息得积分（每日有上限），积分可用于后续扩展消耗场景。
 - 单聊互动累计双人亲密度（等级 + exp）。
 - 我的积分/等级：`GET /api/points/me`；积分流水：`GET /api/points/log`；与某好友亲密度：`GET /api/points/intimacy?peerId=`
 

@@ -24,7 +24,6 @@ public interface MessageMapper {
             "target_id = #{targetId}, `type` = #{type}, content = #{content}, " +
             "urgent = #{urgent}, `read` = #{read}, recalled = #{recalled}, " +
             "deleted = #{deleted}, create_time = #{createTime}, " +
-            "edited = #{edited}, edited_time = #{editedTime}, edit_hidden = #{editHidden}, " +
             "bomb_seconds = #{bombSeconds}, bomb_deadline = #{bombDeadline}, bomb_status = #{bombStatus} " +
             "WHERE id = #{id}")
     int updateById(Message message);

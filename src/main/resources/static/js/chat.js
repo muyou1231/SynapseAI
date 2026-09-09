@@ -484,13 +484,11 @@ window.Chat = (function () {
         } else {
             bodyHtml = App.escapeHtml(wm.content);
         }
-        // ④ 消息改写：对方已读后修改过且未花积分隐藏，气泡显示「已编辑」角标
-        const editedTag = wm.edited ? '<div class="edited-tag">已编辑</div>' : '';
         // ⑨ 消息炸弹：仍在倒计时中时，气泡下方挂一个环形倒计时
         const bombTag = (wm.bombStatus === 'PENDING' && wm.bombDeadline)
             ? '<div class="bomb-ring" data-deadline="' + wm.bombDeadline + '">💣 <span class="bomb-left">--</span>s</div>'
             : '';
-        const inner = '<div class="bubble' + (wm.type === 'VOICE' ? ' voice' : '') + '">' + tag + bodyHtml + editedTag + bombTag + '</div>';
+        const inner = '<div class="bubble' + (wm.type === 'VOICE' ? ' voice' : '') + '">' + tag + bodyHtml + bombTag + '</div>';
         // 群聊中若发送者是我的好友，气泡名优先显示备注
         const senderName = App.friendName(wm.senderId, wm.senderNickname);
         wrap.innerHTML = App.avatarHtml({ id: wm.senderId, nickname: senderName, avatar: wm.senderAvatar }) + inner;
@@ -504,17 +502,6 @@ window.Chat = (function () {
                 recallMessage(wm.id);
             };
             wrap.appendChild(btn);
-        }
-        // ④ 消息改写：自己的文本消息可编辑（对方未读则静默替换，已读则显示「已编辑」）
-        if (me && !wm.recalled && wm.type === 'TEXT') {
-            const editBtn = document.createElement('button');
-            editBtn.className = 'msg-edit';
-            editBtn.textContent = '编辑';
-            editBtn.onclick = function (e) {
-                e.stopPropagation();
-                startEditMessage(wm);
-            };
-            wrap.appendChild(editBtn);
         }
         // ⑨ 炸弹倒计时：气泡渲染完成后启动秒级刷新
         if (bombTag) startBombTicker(wrap);
@@ -1681,77 +1668,6 @@ window.Chat = (function () {
         while (bombTimers.length) clearInterval(bombTimers.pop());
     }
 
-    /**
-     * ④ 就地编辑一条自己发出的文本消息。
-     * 对方未读时服务端会静默替换（对方无感知）；已读后会打上「已编辑」角标。
-     */
-    function startEditMessage(wm) {
-        const box = el('chat-messages');
-        const node = box.querySelector('[data-mid="' + wm.id + '"]');
-        if (!node || node.querySelector('.msg-edit-box')) return;
-        const bubble = node.querySelector('.bubble');
-        if (!bubble) return;
-        const old = (contentCache[wm.id] != null) ? contentCache[wm.id] : (wm.content || '');
-
-        bubble.style.display = 'none';
-        const editor = document.createElement('div');
-        editor.className = 'msg-edit-box';
-        editor.innerHTML =
-            '<textarea class="msg-edit-input" rows="3"></textarea>' +
-            '<div class="msg-edit-actions">' +
-            '<button class="msg-edit-save">保存</button>' +
-            '<button class="msg-edit-cancel">取消</button>' +
-            '</div>';
-        node.appendChild(editor);
-
-        const ta = editor.querySelector('.msg-edit-input');
-        ta.value = old;
-        ta.focus();
-        ta.setSelectionRange(old.length, old.length);
-
-        const close = function () {
-            editor.remove();
-            bubble.style.display = '';
-        };
-        editor.querySelector('.msg-edit-cancel').onclick = function (e) { e.stopPropagation(); close(); };
-        ta.onkeydown = function (e) {
-            if (e.key === 'Escape') { e.preventDefault(); close(); }
-        };
-        editor.querySelector('.msg-edit-save').onclick = function (e) {
-            e.stopPropagation();
-            const val = ta.value.trim();
-            if (!val) { App.notify('内容不能为空'); return; }
-            if (val === old) { close(); return; }
-            Api.messageEdit(wm.id, val).then(function (d) {
-                if (d && d.code === 0) {
-                    contentCache[wm.id] = val;
-                    close();
-                    App.notify('已更新');
-                } else {
-                    App.notify((d && d.msg) || '编辑失败');
-                }
-            }).catch(function () { App.notify('编辑失败'); });
-        };
-    }
-
-    /** WS: ④ 消息内容被更新（自己或对方编辑了消息）→ 就地替换气泡文本，不新增一条 */
-    function onMessageUpdated(wm) {
-        if (!wm || !wm.id) return;
-        const box = el('chat-messages');
-        const node = box.querySelector('[data-mid="' + wm.id + '"]');
-        contentCache[wm.id] = wm.content;
-        if (!node) return; // 不在当前会话，忽略
-        const bubble = node.querySelector('.bubble');
-        if (!bubble) return;
-        // 只替换正文：保留加急标签等结构，做法是重建内部 HTML（顺序与其他角标保持一致）
-        const urgentTag = bubble.querySelector('.urgent-tag');
-        const isVoice = bubble.classList.contains('voice');
-        let html = (urgentTag ? '<div class="urgent-tag">⚡ 加急</div>' : '') + App.escapeHtml(wm.content || '');
-        if (wm.edited) html += '<div class="edited-tag">已编辑</div>';
-        bubble.innerHTML = html;
-        if (isVoice) bubble.classList.add('voice');
-    }
-
     /** WS: ⑨ 炸弹引爆 → 气泡内容替换为占位文案，移除倒计时 */
     function onBombExploded(wm) {
         if (!wm || !wm.id) return;
@@ -1824,8 +1740,7 @@ window.Chat = (function () {
         onIncoming: onIncoming,
         onRead: onRead,
         onTyping: onTyping,
-        // ④ 消息改写 / ⑨ 消息炸弹的实时事件
-        onMessageUpdated: onMessageUpdated,
+        // ⑨ 消息炸弹的实时事件
         onBombExploded: onBombExploded,
         onBombDefused: onBombDefused,
         onTypingContent: onTypingContent,

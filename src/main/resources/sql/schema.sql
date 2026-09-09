@@ -108,9 +108,6 @@ CREATE TABLE message (
     recalled    TINYINT(1)   DEFAULT 0,
     urgent      TINYINT(1)   DEFAULT 0,
     deleted     TINYINT(1)   DEFAULT 0 COMMENT '软删除：0=正常 1=用户已删除',
-    edited      TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '消息改写：1=对方已读后修改过（需显示“已编辑”标记）',
-    edited_time DATETIME     DEFAULT NULL COMMENT '最后一次修改时间',
-    edit_hidden TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '1=已消耗积分隐藏“已编辑”标记',
     bomb_seconds  INT        DEFAULT NULL COMMENT '消息炸弹：发送时设定的倒计时秒数，NULL=非炸弹消息',
     bomb_deadline DATETIME   DEFAULT NULL COMMENT '消息炸弹：对方须在此时间前回复，否则自动引爆',
     bomb_status   VARCHAR(16) DEFAULT NULL COMMENT '消息炸弹状态：PENDING/REPLIED/EXPLODED',
@@ -334,17 +331,6 @@ CREATE TABLE user_setting (
     update_time DATETIME    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY uk_user_setting_user (user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- 消息改写历史（保留每一次修改前的内容，仅发送者本人可查）
-CREATE TABLE message_edit_history (
-    id          BIGINT      NOT NULL AUTO_INCREMENT,
-    message_id  BIGINT      NOT NULL,
-    content     TEXT        NOT NULL COMMENT '该次修改前的历史内容（含最初原文 version=0）',
-    version     INT         NOT NULL DEFAULT 0,
-    edited_time DATETIME    DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id),
-    KEY idx_edit_history_msg (message_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 聊天挖矿：用户积分余额（一人一行）

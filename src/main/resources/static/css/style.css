@@ -929,23 +929,6 @@ body {
     color: var(--accent);
 }
 
-/* 自己消息的「编辑」按钮：与撤回同款，hover 气泡时出现 */
-.msg.me .msg-edit {
-    align-self: center;
-    margin-left: 6px;
-    border: none;
-    background: transparent;
-    color: var(--text-sub);
-    font-size: 12px;
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity .15s;
-    padding: 4px 6px;
-    border-radius: 6px;
-}
-.msg.me:hover .msg-edit { opacity: 1; }
-.msg.me .msg-edit:hover { background: var(--hover); color: var(--accent); }
-
 /* 消息删除按钮（hover 显示，所有消息可用） */
 .msg .msg-del {
     align-self: center;

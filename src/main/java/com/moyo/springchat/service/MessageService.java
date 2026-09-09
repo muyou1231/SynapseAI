@@ -76,10 +76,6 @@ public class MessageService {
         w.setRead(Boolean.TRUE.equals(m.getRead()));
         w.setUrgent(Boolean.TRUE.equals(m.getUrgent()));
         w.setDeleted(Boolean.TRUE.equals(m.getDeleted()));
-        // ④ 消息改写：已读后修改过且未花积分隐藏标记时，前端气泡显示「已编辑」
-        boolean showEdited = Boolean.TRUE.equals(m.getEdited()) && !Boolean.TRUE.equals(m.getEditHidden());
-        w.setEdited(showEdited);
-        w.setEditedTime(m.getEditedTime() == null ? null : m.getEditedTime().format(FMT));
         // ⑨ 消息炸弹：倒计时秒数 / 截止时间 / 状态，普通消息均为 null
         w.setBombSeconds(m.getBombSeconds());
         w.setBombDeadline(m.getBombDeadline() == null ? null : m.getBombDeadline().format(FMT));

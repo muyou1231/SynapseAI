@@ -465,18 +465,6 @@ window.Api = (function () {
         /** 与某好友的亲密度 */
         intimacy: function (peerId) {
             return request('GET', '/api/points/intimacy?peerId=' + peerId);
-        },
-
-        /* ===== ④ 消息改写 ===== */
-        messageEdit: function (id, content) {
-            return request('PUT', '/api/message/' + id + '/edit', { messageId: id, content: content });
-        },
-        messageEditHistory: function (id) {
-            return request('GET', '/api/message/' + id + '/edit-history');
-        },
-        /** 消耗积分隐藏「已编辑」角标 */
-        hideEditMark: function (id) {
-            return request('POST', '/api/message/' + id + '/hide-edit-mark');
         }
     };
 })();
