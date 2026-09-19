@@ -17,7 +17,7 @@
 | 持久化 | MyBatis-Plus 3.5.7（`mybatis-plus-spring-boot3-starter`） | 显式 Mapper（`@Insert/@Select/...`），不继承 `BaseMapper` |
 | 数据库 | MySQL 5.7 | 账号 `root/hsp`，库名 `synapse_ai` |
 | 缓存/在线状态 | Redis | 在线状态、验证码、通知等 |
-| 对象存储 | MinIO | 图片/语音/绘画文件，桶 `synapse-ai`（旧桶 `spring-chat` 需重命名或迁移） |
+| 对象存储 | MinIO | 图片/语音/绘画文件，桶 `spring-chat` |
 | 邮件 | spring-boot-starter-mail | QQ SMTP（验证码、通知邮件） |
 | 实时通信 | Spring WebSocket + STOMP（SockJS） | 单聊/群聊/通知/通话信令实时推送 |
 | AI 能力 | 阿里云百炼 / 通义（`openai-java` 官方 SDK） | 兼容 OpenAI 协议的 `/chat/completions`，支持流式 SSE |
@@ -143,7 +143,7 @@ SynapseAI/
 | Maven | 3.x | 构建工具 |
 | MySQL | 5.7 | 建库 `synapse_ai`，账号 `root/hsp` |
 | Redis | 任意稳定版 | 默认 `localhost:6379`（配置中带密码示例，本地可空） |
-| MinIO | 任意稳定版 | 桶 `synapse-ai`，默认 `http://localhost:9000` |
+| MinIO | 任意稳定版 | 桶 `spring-chat`，默认 `http://localhost:9000` |
 | 阿里云百炼 Key | 可选（启用 AI 时需要） | 填 `application-local.yml` 的 `app.bailian.api-key` |
 
 > ⚠️ MySQL 5.7 **不支持** `DROP/CREATE INDEX/COLUMN IF EXISTS`，增量迁移统一用「存储过程 + CONTINUE HANDLER 吞异常」实现幂等。
@@ -176,7 +176,7 @@ spring:
 minio:
   accessKey: admin
   secretKey: ${COMMON_PASSWORD}
-  bucket: synapse-ai
+  bucket: spring-chat
   endpoint: http://localhost:9000
 app:
   admin:

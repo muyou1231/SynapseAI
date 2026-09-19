@@ -1,0 +1,12 @@
+# 本地私有配置模板：复制为 application-local.yml 后填写自己的密钥，切勿提交真实值
+# 也可直接用环境变量（ALI_API_KEY）避免把密钥写进文件
+app:
+  bailian:
+    # 阿里云百炼 API Key（sk- 开头）
+    api-key: ${ALI_API_KEY}
+    # 模型名称（在百炼控制台选定的模型）
+    model: qwen3.7-plus
+    # 阿里云百炼 OpenAI 兼容接口地址。
+    # 注意：使用官方 OpenAI Java SDK 时，base-url 只需到 /v1，SDK 会自动补 /chat/completions。
+    # 若使用百炼 MaaS 工作区端点，可改为 https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1

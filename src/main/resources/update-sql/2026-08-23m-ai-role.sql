@@ -1,6 +1,6 @@
 -- AI 助手独立类型改造：将 moyo 助手从普通 USER 升级为 role=AI 的独立账户，
 -- ai_assistant 配置表新增 user_id 关联，并回填默认助手(id=1)的 user_id。
--- 执行库：synapse_ai（非 spring_chat_t 旧库）
+-- 执行库：synapse_ai
 -- 说明：role=AI 的账户不可被普通用户注册/搜索/加好友/改资料，仅管理员在管理端增改。
 
 -- 1) ai_assistant 增加 user_id 列（关联 user 表 role=AI 账户）

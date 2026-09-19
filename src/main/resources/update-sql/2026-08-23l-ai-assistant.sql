@@ -1,5 +1,5 @@
 -- moyo AI 助手：全局配置表 + 朋友圈 AI 审核列 + 审核模式增加 AI
--- 执行库：synapse_ai（非 spring_chat_t 旧库）
+-- 执行库：synapse_ai
 
 -- 1) AI 助手全局配置（单例，id=1）：管理员可调试/启用/禁用/设置状态/编辑提示词
 CREATE TABLE IF NOT EXISTS ai_assistant (

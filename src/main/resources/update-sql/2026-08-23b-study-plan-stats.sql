@@ -1,5 +1,5 @@
 -- 学习空间：计划表加学习记录字段 + 新建每日学习统计表
--- 运行库：synapse_ai（非 spring_chat_t）
+-- 运行库：synapse_ai
 -- MySQL 5.7 不支持 IF EXISTS / DROP INDEX IF EXISTS，用存储过程吞异常做幂等。
 
 USE synapse_ai;
