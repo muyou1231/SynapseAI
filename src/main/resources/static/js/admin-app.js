@@ -145,6 +145,7 @@ window.AdminApp = (function () {
         else if (name === 'assistant') renderAssistant();
         else if (name === 'groups') renderGroups();
         else if (name === 'notices') renderNotices();
+        else if (name === 'mcp') renderMcp();
     }
 
     function esc(s) {
@@ -1108,6 +1109,116 @@ window.AdminApp = (function () {
         }
     }
 
+    /* ============ MCP 功能配置 ============ */
+    function renderMcp() {
+        var html = '<div class="ad-section-title">MCP 功能配置</div>' +
+            '<div class="ad-hint">管理端可在此新增 / 启停各项 MCP 功能。普通用户悬浮窗「AI 小助手」中仅能看到已启用的功能（如「消息群发助手」）。</div>' +
+            '<div class="ad-mcp-actions"><button class="ad-btn" onclick="AdminApp.mcpNew()">+ 新增功能</button></div>' +
+            '<div id="mcp-edit-wrap"></div>' +
+            '<div id="mcp-list" class="ad-mcp-list"><div class="ad-empty">加载中…</div></div>';
+        el('ad-main').innerHTML = html;
+        loadMcpList();
+    }
+
+    function loadMcpList() {
+        var box = el('mcp-list');
+        if (!box) return;
+        api('GET', '/api/admin/mcp').then(function (d) {
+            if (!d || d.code !== 0 || !Array.isArray(d.data)) {
+                box.innerHTML = '<div class="ad-empty">加载失败</div>';
+                return;
+            }
+            if (d.data.length === 0) {
+                box.innerHTML = '<div class="ad-empty">暂无 MCP 功能，点击「新增功能」创建</div>';
+                return;
+            }
+            box.innerHTML = d.data.map(function (f) {
+                var builtin = f.code === 'message_sender';
+                return '<div class="ad-mcp-item">' +
+                    '<div class="ad-mcp-main">' +
+                    '  <div class="ad-mcp-name">' + esc(f.name) + ' <span class="ad-mcp-code">' + esc(f.code) + (builtin ? ' · 内置' : '') + '</span></div>' +
+                    '  <div class="ad-mcp-desc">' + esc(f.description || '') + '</div>' +
+                    '  <div class="ad-mcp-meta">排序：' + esc(f.sort) + (f.configJson ? ' · 配置：' + esc(f.configJson) : '') + '</div>' +
+                    '</div>' +
+                    '<div class="ad-mcp-ops">' +
+                    '  <label class="ad-switch"><input type="checkbox" ' + (f.enabled ? 'checked' : '') + ' onchange="AdminApp.mcpToggle(' + f.id + ', this.checked)"><span>启用</span></label>' +
+                    '  <button class="ad-btn ghost" onclick="AdminApp.mcpEdit(' + f.id + ')">编辑</button>' +
+                    '  <button class="ad-btn danger" onclick="AdminApp.mcpDelete(' + f.id + ')">删除</button>' +
+                    '</div>' +
+                    '</div>';
+            }).join('');
+        });
+    }
+
+    function mcpForm(item) {
+        item = item || {};
+        var isEdit = !!item.id;
+        var html = '<div class="ad-mcp-form">' +
+            '<div class="ad-form-row"><label>功能编码(code)</label><input id="mcp-f-code" class="ad-input" value="' + esc(item.code || '') + '" placeholder="唯一编码，如 message_sender" ' + (isEdit ? 'disabled' : '') + '></div>' +
+            '<div class="ad-form-row"><label>显示名</label><input id="mcp-f-name" class="ad-input" value="' + esc(item.name || '') + '"></div>' +
+            '<div class="ad-form-row"><label>简介</label><textarea id="mcp-f-desc" class="ad-input" rows="2">' + esc(item.description || '') + '</textarea></div>' +
+            '<div class="ad-form-row"><label>JSON 配置</label><textarea id="mcp-f-json" class="ad-input" rows="3" placeholder=\'{"maxRecipients":50}\'>' + esc(item.configJson || '') + '</textarea></div>' +
+            '<div class="ad-form-row"><label>排序</label><input id="mcp-f-sort" type="number" class="ad-input ad-input-sm" value="' + esc(item.sort != null ? item.sort : 0) + '"></div>' +
+            '<div class="ad-form-row"><label>启用</label><input id="mcp-f-enabled" type="checkbox" ' + (item.enabled ? 'checked' : '') + '></div>' +
+            '<div class="ad-form-row"><button class="ad-btn" id="mcp-f-save">保存</button> <button class="ad-btn ghost" onclick="AdminApp.mcpCancelEdit()">取消</button> <span id="mcp-f-msg" class="ad-hint"></span></div>' +
+            '</div>';
+        el('mcp-edit-wrap').innerHTML = html;
+        el('mcp-f-save').addEventListener('click', function () { mcpSave(item.id); });
+    }
+
+    function mcpNew() { mcpForm(null); }
+
+    function mcpEdit(id) {
+        api('GET', '/api/admin/mcp').then(function (d) {
+            if (d && d.code === 0 && Array.isArray(d.data)) {
+                var item = d.data.find(function (x) { return x.id === id; });
+                if (item) mcpForm(item);
+            }
+        });
+    }
+
+    function mcpCancelEdit() { el('mcp-edit-wrap').innerHTML = ''; }
+
+    function mcpSave(id) {
+        var code = el('mcp-f-code').value.trim();
+        var name = el('mcp-f-name').value.trim();
+        var description = el('mcp-f-desc').value.trim();
+        var configJson = el('mcp-f-json').value.trim();
+        var sort = parseInt(el('mcp-f-sort').value, 10);
+        if (isNaN(sort)) sort = 0;
+        var enabled = el('mcp-f-enabled').checked;
+        var msg = el('mcp-f-msg');
+        if (!id && !code) { msg.textContent = '请填写功能编码(code)'; return; }
+        var body = { name: name, description: description, configJson: configJson, sort: sort, enabled: enabled };
+        if (!id) body.code = code;
+        msg.textContent = '保存中…';
+        var p = id ? api('PUT', '/api/admin/mcp/' + id, body) : api('POST', '/api/admin/mcp', body);
+        p.then(function (r) {
+            if (r && r.code === 0) {
+                el('mcp-edit-wrap').innerHTML = '';
+                loadMcpList();
+            } else {
+                msg.textContent = (r && r.message) || '保存失败';
+            }
+        }).catch(function (e) { msg.textContent = '保存失败：' + e.message; });
+    }
+
+    function mcpToggle(id, enabled) {
+        api('POST', '/api/admin/mcp/' + id + '/toggle', { enabled: !!enabled }).then(function (r) {
+            if (!r || r.code !== 0) { loadMcpList(); }
+        });
+    }
+
+    function mcpDelete(id) {
+        confirmModal('确定删除该 MCP 功能吗？此操作不可恢复（内置功能 message_sender 仅可停用，不可删除）。', { danger: true }).then(function (ok) {
+            if (!ok) return;
+            api('DELETE', '/api/admin/mcp/' + id).then(function (r) {
+                if (r && r.code === 0) loadMcpList();
+                else confirmModal((r && r.message) || '删除失败', { okText: '知道了' });
+            });
+        });
+    }
+
     return {
         init: init,
         login: login,
@@ -1144,7 +1255,13 @@ window.AdminApp = (function () {
         toggleGroupMembers: toggleGroupMembers,
         onNoticeTargetChange: onNoticeTargetChange,
         publishNotice: publishNotice,
-        revokeNotice: revokeNotice
+        revokeNotice: revokeNotice,
+        renderMcp: renderMcp,
+        mcpNew: mcpNew,
+        mcpEdit: mcpEdit,
+        mcpDelete: mcpDelete,
+        mcpCancelEdit: mcpCancelEdit,
+        mcpToggle: mcpToggle
     };
 })();
 

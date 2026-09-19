@@ -1,8 +1,10 @@
-# MOYO-chat（有趣的网页聊天工具）
+# SynapseAI
 
-一个基于 Spring Boot 3 的**有趣的网页聊天工具**，包含用户体系、好友/群聊、实时消息、AI 智能助手、学习空间（计划/番茄钟/AI 对话）、朋友圈（动态/审核）、绘画、通知与管理后台等完整功能。前端为原生 HTML/CSS/JS（微信风格双栏布局），后端使用 REST + WebSocket(STOMP) 双通道。
+> 寓意「突触」——不只是一个聊天工具，而是把众多 AI 工具连接在一起的集成平台。
 
-> 包名：`com.moyo.springchat`
+一个基于 Spring Boot 3 的 **AI 工具集成平台**，以即时通讯为底座：包含用户体系、好友/群聊、实时消息、AI 智能助手、学习空间（计划/番茄钟/AI 对话）、朋友圈（动态/审核）、绘画、通知与管理后台等完整功能；并通过 **MCP 功能框架**（管理端可配置、可启停）持续挂载新的 AI 能力，首个内置能力为「消息群发助手」。前端为原生 HTML/CSS/JS（微信风格双栏布局），后端使用 REST + WebSocket(STOMP) 双通道。
+
+> 包名：`com.synapseai`
 > 默认端口：`8080`（可用 `--server.port=` 覆盖）
 
 ---
@@ -13,9 +15,9 @@
 |---|---|---|
 | 后端框架 | Spring Boot 3.0.2 / Java 17 | 主框架 |
 | 持久化 | MyBatis-Plus 3.5.7（`mybatis-plus-spring-boot3-starter`） | 显式 Mapper（`@Insert/@Select/...`），不继承 `BaseMapper` |
-| 数据库 | MySQL 5.7 | 账号 `root/hsp`，库名 `spring_chat` |
+| 数据库 | MySQL 5.7 | 账号 `root/hsp`，库名 `synapse_ai` |
 | 缓存/在线状态 | Redis | 在线状态、验证码、通知等 |
-| 对象存储 | MinIO | 图片/语音/绘画文件，桶 `spring-chat` |
+| 对象存储 | MinIO | 图片/语音/绘画文件，桶 `synapse-ai`（旧桶 `spring-chat` 需重命名或迁移） |
 | 邮件 | spring-boot-starter-mail | QQ SMTP（验证码、通知邮件） |
 | 实时通信 | Spring WebSocket + STOMP（SockJS） | 单聊/群聊/通知/通话信令实时推送 |
 | AI 能力 | 阿里云百炼 / 通义（`openai-java` 官方 SDK） | 兼容 OpenAI 协议的 `/chat/completions`，支持流式 SSE |
@@ -85,11 +87,11 @@
 ## 三、项目结构
 
 ```text
-spring-chat/
+SynapseAI/
 ├── pom.xml
 ├── README.md
-├── src/main/java/com/moyo/springchat/
-│   ├── SpringChatApplication.java        # 启动类 + @MapperScan
+├── src/main/java/com/synapseai/
+│   ├── SynapseAIApplication.java        # 启动类 + @MapperScan
 │   ├── config/                           # WebSocket / Minio / Redis / Mail / 拦截器等
 │   ├── controller/                       # 16 个 REST + WebSocket 控制器
 │   │   ├── AuthController          # 验证码/改密/绑邮箱
@@ -139,9 +141,9 @@ spring-chat/
 |---|---|---|
 | JDK | 17 | `java.version=17` |
 | Maven | 3.x | 构建工具 |
-| MySQL | 5.7 | 建库 `spring_chat`，账号 `root/hsp` |
+| MySQL | 5.7 | 建库 `synapse_ai`，账号 `root/hsp` |
 | Redis | 任意稳定版 | 默认 `localhost:6379`（配置中带密码示例，本地可空） |
-| MinIO | 任意稳定版 | 桶 `spring-chat`，默认 `http://localhost:9000` |
+| MinIO | 任意稳定版 | 桶 `synapse-ai`，默认 `http://localhost:9000` |
 | 阿里云百炼 Key | 可选（启用 AI 时需要） | 填 `application-local.yml` 的 `app.bailian.api-key` |
 
 > ⚠️ MySQL 5.7 **不支持** `DROP/CREATE INDEX/COLUMN IF EXISTS`，增量迁移统一用「存储过程 + CONTINUE HANDLER 吞异常」实现幂等。
@@ -159,7 +161,7 @@ spring:
   config:
     import: optional:classpath:application-local.yml   # 本地密钥覆盖
   datasource:
-    url: jdbc:mysql://localhost:3306/spring_chat?...
+    url: jdbc:mysql://localhost:3306/synapse_ai?...
     username: root
     password: hsp
   data:
@@ -174,7 +176,7 @@ spring:
 minio:
   accessKey: admin
   secretKey: ${COMMON_PASSWORD}
-  bucket: spring-chat
+  bucket: synapse-ai
   endpoint: http://localhost:9000
 app:
   admin:
@@ -218,7 +220,7 @@ mvn clean compile
 # 2. 运行（默认 8080）
 mvn spring-boot:run
 # 或指定端口
-java -jar target/spring-chat-*.jar --server.port=8091
+java -jar target/synapse-ai-*.jar --server.port=8091
 
 # 3. 访问
 #    主应用：  http://localhost:8080/
@@ -471,7 +473,7 @@ DELETE /admin/assistants/{id}              删除助手
 
 ## 十二、开发约定
 
-- **Mapper 显式化**：所有 Mapper 位于 `com.moyo.springchat.mapper`，**不继承 `BaseMapper`**；CRUD 用显式 `@Insert/@Select/@Update/@Delete` + `@Options(useGeneratedKeys=true, keyProperty="id")`。
+- **Mapper 显式化**：所有 Mapper 位于 `com.synapseai.mapper`，**不继承 `BaseMapper`**；CRUD 用显式 `@Insert/@Select/@Update/@Delete` + `@Options(useGeneratedKeys=true, keyProperty="id")`。
 - **SQL 分类管理**：全量建表仅放 `schema.sql`（DROP+重建）；增量变更放 `update-sql/` 用 `ALTER TABLE`，不让单个脚本覆盖线上数据。
 - **前端版本缓存**：`index.html` 脚本带 `?v=YYYYMMDDxx`，改动后 bump 版本号 + 硬刷；改 `static/js` 后必须 `mvn compile` 同步到 `target/classes`。
 - **样式分层**：`style.css` 为基础布局/组件样式，`style-premium.css` 为后置升级层（加载顺序在其之后，用相同选择器覆盖/叠加阴影、动效、渐变等视觉打磨）；新组件优先在 `style.css` 定义基础样式，视觉精装改动放到 `style-premium.css`，便于整体回退。`js/ui-polish.js` 需作为页面第一个 `<script>` 加载（早于 app.js / admin-app.js），提供弹层关闭动效等跨页面通用交互能力。

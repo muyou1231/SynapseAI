@@ -465,6 +465,20 @@ window.Api = (function () {
         /** 与某好友的亲密度 */
         intimacy: function (peerId) {
             return request('GET', '/api/points/intimacy?peerId=' + peerId);
+        },
+
+        /* ===== MCP 功能（管理端可配置 / 启停） ===== */
+        /** 列出当前已启用的 MCP 功能（前端据此决定悬浮窗展示哪些能力） */
+        mcpFunctions: function () {
+            return request('GET', '/api/mcp/functions');
+        },
+        /** message_sender 预览：{ instruction?, recipients?:[{type,value}], content? } */
+        mcpPreview: function (body) {
+            return request('POST', '/api/mcp/message-sender/preview', body);
+        },
+        /** message_sender 发送：{ recipients:[{type,value}], content } */
+        mcpSend: function (body) {
+            return request('POST', '/api/mcp/message-sender/send', body);
         }
     };
 })();

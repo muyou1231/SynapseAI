@@ -1,6 +1,6 @@
 -- 2026-08-23a：study_chat 增加 thread 列，支持「同一会话内 chat/plan/quiz/summarize 四条独立记录线」
 -- 兼容 MySQL 5.7（不支持 DROP/CREATE INDEX IF EXISTS），用存储过程包裹 ALTER 实现幂等。
-USE spring_chat;
+USE synapse_ai;
 SET NAMES utf8mb4;
 
 DELIMITER $$
