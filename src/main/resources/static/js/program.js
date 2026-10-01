@@ -34,6 +34,14 @@ window.Program = (function () {
             icon: '💎',
             color: 'linear-gradient(135deg,#07c160,#ffb300)',
             open: function () { if (window.Program) Program.openPoints(); }
+        },
+        {
+            key: 'family',
+            name: '家庭树',
+            desc: '家族族谱 · 亲属关系 · 大事记 · 导出长图与 PDF',
+            icon: '🌳',
+            color: 'linear-gradient(135deg,#3E5C4B,#A9714B)',
+            open: function () { if (window.Family) Family.open(); }
         }
         // 示例：未来新增
         // , { key:'toolbox', name:'工具箱', desc:'...', icon:'🧰', color:'...', open:function(){...} }

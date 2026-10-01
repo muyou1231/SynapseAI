@@ -401,6 +401,22 @@ DELETE /admin/assistants/{id}              删除助手
 
 ---
 
+---
+
+## 八·六、家庭树 / 家族族谱
+
+以「程序空间 → 家庭树」为入口的完整族谱模块：家族 CRUD、成员档案、亲属关系（含再婚/离异/继父母/养子女）、
+家族树可视化（AntV G6，纵向/横向布局切换）、大事记时间轴、族谱导出（长图 PNG / A4 分页 PDF）、
+只读分享链接、成员搜索；家族与成员更新均带乐观锁，超大家族（500+）按层折叠懒加载。
+
+- 建表：`sql/update-sql/2026-10-01-family-tree.sql`（5 张表：family / family_member / family_relation / family_member_photo / family_event）
+- 后端：`FamilyController`（`/api/family/**`，约 30 个端点）+ `FamilyService` + `FamilyTreeLayout`（自研家谱布局：并查集合并夫妻为家庭单元 + tidy-tree 两遍布局，前后端与导出共用同一份坐标）+ `FamilyTreeExporter`（纯 JDK 渲染长图与手写 PDF 容器，零第三方依赖）
+- 递归查询：Mapper 提供 MySQL 8 `WITH RECURSIVE` 版本，运行环境为 MySQL 5.7 时自动降级为内存 BFS
+- 鉴权：创建人与家族成员本人可编辑；私有家族对无关用户不可见；`/api/family/share/**` 凭 token 免登录只读访问
+- 前端：`js/family.js` + `css/family.css`（国风简约：米白底 + 墨绿/赭石点缀，PC 最小宽 1200px）
+
+---
+
 ## 八·五、创新功能（实验性）
 
 一批「趣味增强」功能，入口集中在程序空间（顶部「程序空间」Tab）。

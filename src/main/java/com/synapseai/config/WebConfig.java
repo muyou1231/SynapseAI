@@ -46,6 +46,10 @@ public class WebConfig implements WebMvcConfigurer {
                         || uri.endsWith("/api/auth/reset-password") || uri.endsWith("/api/auth/code-config")) {
                     return true;
                 }
+                // 家族族谱只读分享（/api/family/share/**）：凭 token 访问，允许未登录查看
+                if (uri.startsWith("/api/family/share/")) {
+                    return true;
+                }
                 if (!uri.startsWith("/api/")) {
                     return true;
                 }
