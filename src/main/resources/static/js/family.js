@@ -1021,7 +1021,12 @@ window.Family = (function () {
         }
     }
 
-    function confirmDeleteMember(memberId) {
+    /**
+     * 删除成员：先拉取影响范围做二次确认，再提交删除。
+     * @param memberId 成员 id
+     * @param onDone   可选回调，删除成功后执行（用于顺带关闭「编辑资料」弹窗等上层容器）
+     */
+    function confirmDeleteMember(memberId, onDone) {
         API.deletePreview(memberId).then(function (p) {
             var warn = '<div class="fm-warn">确定删除成员「' + esc(p.name) + '」？<br>' +
                 '将同时解除其 <b>' + (p.relationCount || 0) + '</b> 条亲属关系、' +
@@ -1033,11 +1038,20 @@ window.Family = (function () {
                 '<br><b>此操作不可撤销。</b></div>';
             confirmBox('删除成员', warn, '确认删除', function () {
                 return API.memberDelete(memberId).then(function () {
-                    notify('已删除成员');
+                    notify('已删除成员「' + (p.name || '') + '」');
+                    closeMemberDrawer();          // 人已删除，抽屉不能继续停在他身上
                     loadTree();
+                    if (onDone) onDone();
                 });
             });
         }).catch(function (e) { notify(e.message || '预检失败'); });
+    }
+
+    /** 关闭成员详情抽屉（删除 / 外部刷新时复用） */
+    function closeMemberDrawer() {
+        var mask = document.getElementById('fm-drawer-mask');
+        if (mask) mask.remove();
+        state.detail = null;
     }
 
     // ======================================================================
@@ -1158,12 +1172,18 @@ window.Family = (function () {
                 '<div class="fm-hint">上传后即时生效（新增成员则在保存后生效）；也可在成员详情里点击头像更换。</div>' +
             '</div>' +
             '<div class="fm-modal-foot">' +
+                (isEdit ? '<button class="fm-btn danger" data-act="del" style="margin-right:auto">删除该成员</button>' : '') +
                 '<button class="fm-btn ghost" data-act="cancel">取消</button>' +
                 '<button class="fm-btn" data-act="ok">保存</button>' +
             '</div>';
         var mask = modal(html, function (m) {
             m.querySelector('[data-act="cancel"]').onclick = function () { m.remove(); };
             m.querySelector('[data-act="ok"]').onclick = function () { save(m); };
+            // 编辑态提供删除入口：确认后由 confirmDeleteMember 统一关闭抽屉、刷新族谱，再关掉本弹窗
+            var delBtn = m.querySelector('[data-act="del"]');
+            if (delBtn) delBtn.onclick = function () {
+                confirmDeleteMember(memberId, function () { m.remove(); });
+            };
             // 逝世勾选联动：未勾选时禁用并清空逝世日期
             var dz = m.querySelector('#fm-m-deceased');
             var di = m.querySelector('#fm-m-death');
@@ -1318,10 +1338,23 @@ window.Family = (function () {
                         '<button class="fm-tb-btn" data-rel="remove">解除关系</button>' +
                         '</div>' : '') +
                 '</div>' +
+
+                (d.writable ? '<div class="fm-sec fm-danger-sec">' +
+                    '<div class="fm-sec-title">危险操作</div>' +
+                    '<div class="fm-danger-row">' +
+                        '<div class="fm-danger-tip">删除后该成员将从族谱消失，其亲属关系与相册一并清理，<b>不可恢复</b>。' +
+                        '后代成员不会被删除，只会断开与他的连线。</div>' +
+                        '<button class="fm-btn danger" id="fm-d-del">删除成员</button>' +
+                    '</div>' +
+                '</div>' : '') +
             '</div>';
 
         document.body.appendChild(wrap);
         wrap.querySelector('[data-act="close"]').onclick = function () { wrap.remove(); state.detail = null; };
+
+        // 删除成员（抽屉底部「危险操作」区，与画布右键菜单共用同一套预检确认流程）
+        var delBtn = document.getElementById('fm-d-del');
+        if (delBtn) delBtn.onclick = function () { confirmDeleteMember(d.id); };
 
         // 逝世勾选联动：未勾选时禁用并清空逝世日期（只读成员不做联动，避免误改展示值）
         var dDeceased = document.getElementById('fm-d-deceased');

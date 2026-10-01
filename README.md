@@ -413,6 +413,7 @@ DELETE /admin/assistants/{id}              删除助手
 - 后端：`FamilyController`（`/api/family/**`，约 30 个端点）+ `FamilyService` + `FamilyTreeLayout`（自研家谱布局：并查集合并夫妻为家庭单元 + tidy-tree 两遍布局，前后端与导出共用同一份坐标）+ `FamilyTreeExporter`（纯 JDK 渲染长图与手写 PDF 容器，零第三方依赖）
 - 递归查询：Mapper 提供 MySQL 8 `WITH RECURSIVE` 版本，运行环境为 MySQL 5.7 时自动降级为内存 BFS
 - 鉴权：创建人与家族成员本人可编辑；私有家族对无关用户不可见；`/api/family/share/**` 凭 token 免登录只读访问
+- 删除成员：`GET /api/family/member/{id}/delete-preview` 先返回影响范围（关系数 / 照片数 / 后代姓名），确认后 `DELETE /api/family/member/{id}` 软删成员并清理其全部关系与相册；**后代成员保留**，仅断开连线。入口：节点右键菜单「删除成员」、成员详情抽屉底部「危险操作」区、编辑资料弹窗左下角「删除该成员」
 - 前端：`js/family.js` + `css/family.css`（国风简约：米白底 + 墨绿/赭石点缀，PC 最小宽 1200px）
 
 ---

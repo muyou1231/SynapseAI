@@ -421,6 +421,31 @@
     color: var(--fm-ink-2);
 }
 
+/* 危险操作区（删除成员） */
+.fm-danger-sec { border-color: #EBD3C7; }
+.fm-danger-sec .fm-sec-title { color: var(--fm-danger); }
+
+.fm-danger-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    background: #FDF3EE;
+    border: 1px solid #EBD3C7;
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.fm-danger-tip {
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--fm-ink-2);
+}
+
+.fm-danger-tip b { color: var(--fm-danger); }
+
+.fm-danger-row .fm-btn { flex: 0 0 auto; padding: 7px 16px; }
+
 .fm-form-row {
     display: flex;
     gap: 10px;
