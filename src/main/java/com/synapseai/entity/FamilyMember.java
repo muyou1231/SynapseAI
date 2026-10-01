@@ -39,7 +39,13 @@ public class FamilyMember {
     /** 出生日期 */
     private LocalDate birthDate;
 
-    /** 逝世日期（空=在世） */
+    /**
+     * 是否已逝世：0=在世，1=已逝世。
+     * 与 deathDate 的关系：deceased=1 时 deathDate 可为空，表示「已逝世但日期未知」。
+     */
+    private Boolean deceased = false;
+
+    /** 逝世日期（deceased=1 时可为空，表示日期未知） */
     private LocalDate deathDate;
 
     /** 人物简介（生平介绍） */
@@ -132,6 +138,14 @@ public class FamilyMember {
 
     public void setBirthDate(LocalDate birthDate) {
         this.birthDate = birthDate;
+    }
+
+    public Boolean getDeceased() {
+        return deceased;
+    }
+
+    public void setDeceased(Boolean deceased) {
+        this.deceased = deceased;
     }
 
     public LocalDate getDeathDate() {

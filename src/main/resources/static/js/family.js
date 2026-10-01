@@ -38,6 +38,7 @@ window.Family = (function () {
         tree: null,            // 后端返回的树数据
         graph: null,           // G6 实例
         direction: 'TB',
+        depth: 0,              // 折叠层级（0=不折叠，超出的辈分会折叠成 +N）
         expanded: {},          // 已手动展开的节点 memberId
         readonly: false,
         shareToken: null,      // 分享模式下的 token（非 null 表示只读分享视图）
@@ -103,6 +104,15 @@ window.Family = (function () {
         deletePreview: function (id) { return req('GET', '/api/family/member/' + id + '/delete-preview').then(unwrap); },
         photos: function (mid) { return req('GET', '/api/family/member/' + mid + '/photos').then(unwrap); },
         photoDelete: function (pid) { return req('DELETE', '/api/family/photo/' + pid).then(unwrap); },
+        /**
+         * 上传成员头像：后端直接落库并返回 url（POST /api/family/member/{id}/avatar）。
+         * 与「先传文件再点保存」的两步方式不同，这里上传即生效。
+         */
+        memberAvatar: function (id, file) {
+            var fd = new FormData();
+            fd.append('file', file);
+            return upload('/api/family/member/' + id + '/avatar', fd).then(unwrap);
+        },
         relationAdd: function (body) { return req('POST', '/api/family/relation/add', body).then(unwrap); },
         relationRemove: function (aId, bId) {
             return req('DELETE', '/api/family/relation' + q({ aId: aId, bId: bId })).then(unwrap);
@@ -113,6 +123,26 @@ window.Family = (function () {
         eventDelete: function (id) { return req('DELETE', '/api/family/event/' + id).then(unwrap); },
         search: function (fid, keyword) {
             return req('GET', '/api/family/' + fid + '/search' + q({ keyword: keyword })).then(unwrap);
+        },
+
+        // ---- AI 助手 ----
+        aiParse: function (fid, text) {
+            return req('POST', '/api/family/' + fid + '/ai/parse', { text: text }).then(unwrap);
+        },
+        aiApply: function (fid, payload) {
+            return req('POST', '/api/family/' + fid + '/ai/apply', payload).then(unwrap);
+        },
+        aiAudit: function (fid) {
+            return req('GET', '/api/family/' + fid + '/ai/audit').then(unwrap);
+        },
+        aiInfer: function (fid) {
+            return req('GET', '/api/family/' + fid + '/ai/infer').then(unwrap);
+        },
+        aiInferApply: function (fid, items) {
+            return req('POST', '/api/family/' + fid + '/ai/infer/apply', items || null).then(unwrap);
+        },
+        aiLayout: function (fid) {
+            return req('GET', '/api/family/' + fid + '/ai/layout').then(unwrap);
         }
     };
 
@@ -415,6 +445,7 @@ window.Family = (function () {
             '<button class="fm-tb-btn' + (state.direction === 'LR' ? ' active' : '') + '" data-act="dir-lr">横向</button>' +
             '<div class="fm-tb-sep"></div>' +
             '<button class="fm-tb-btn" data-act="add-member">＋ 成员</button>' +
+            '<button class="fm-tb-btn" data-act="ai">✨ AI</button>' +
             '<button class="fm-tb-btn" data-act="timeline">📜 大事记</button>' +
             '<button class="fm-tb-btn" data-act="settings">⚙ 设置</button>' +
             '<div class="fm-tb-sep"></div>' +
@@ -458,6 +489,7 @@ window.Family = (function () {
             case 'dir-tb': state.direction = 'TB'; renderToolbar(); loadTree(); break;
             case 'dir-lr': state.direction = 'LR'; renderToolbar(); loadTree(); break;
             case 'add-member': openMemberForm(null); break;
+            case 'ai': openAiPanel(); break;
             case 'timeline': openTimeline(); break;
             case 'settings': openSettings(); break;
             case 'png':
@@ -503,6 +535,33 @@ window.Family = (function () {
         }).catch(function () { box.style.display = 'none'; });
     }
 
+    /**
+     * 判断点击是否落在折叠徽标「+N」上。
+     * 徽标圆心相对节点中心为 (NODE_W/2-4, NODE_H/2-2)，半径 11，带 5px 容差。
+     */
+    function hitBadge(e, model) {
+        var px = (e.canvasX !== undefined && e.canvasX !== null) ? e.canvasX : e.x;
+        var py = (e.canvasY !== undefined && e.canvasY !== null) ? e.canvasY : e.y;
+        if (px === undefined || py === undefined) return false;
+        var dx = px - (model.x + NODE_W / 2 - 4);
+        var dy = py - (model.y + NODE_H / 2 - 2);
+        return dx * dx + dy * dy <= 16 * 16;
+    }
+
+    /** 展开某个折叠节点的后代（会展开该分支的全部后代，而不是只多一层） */
+    function expandNode(memberId) {
+        state.expanded[memberId] = true;
+        notify('已展开该分支的后代');
+        loadTree();
+    }
+
+    /** 收起：回到按层数折叠的视图 */
+    function collapseAll() {
+        state.expanded = {};
+        if (!state.depth) state.depth = 3;
+        loadTree();
+    }
+
     function focusMember(memberId) {
         if (!state.graph) return;
         var item = state.graph.findById(String(memberId));
@@ -519,7 +578,7 @@ window.Family = (function () {
         var fid = state.family && state.family.id;
         if (!fid) return;
         var expandedIds = Object.keys(state.expanded).filter(function (k) { return state.expanded[k]; });
-        API.tree(fid, state.direction, 0, expandedIds, state.shareToken).then(function (vo) {
+        API.tree(fid, state.direction, state.depth || 0, expandedIds, state.shareToken).then(function (vo) {
             state.tree = vo;
             state.readonly = !!vo.readonly;
             renderTree(vo);
@@ -558,8 +617,10 @@ window.Family = (function () {
                     memberId: n.memberId,
                     name: n.name,
                     avatar: n.avatar,
+                    photoUrl: n.photoUrl,
                     gender: n.gender,
                     alive: n.alive,
+                    deceased: n.deceased,
                     birthYear: n.birthYear,
                     deathYear: n.deathYear,
                     bioBrief: n.bioBrief,
@@ -578,6 +639,8 @@ window.Family = (function () {
                     target: e.target,
                     edgeKind: spouse ? 'spouse' : 'parent',
                     type: spouse ? 'line' : 'family-edge',
+                    // 同单元多家长合并出线点：TB=单元中点 x，LR=单元中点 y（无则从家长卡片边缘出线）
+                    coupleCenter: (e.coupleCenter === null || e.coupleCenter === undefined) ? null : e.coupleCenter,
                     style: {
                         stroke: color,
                         lineWidth: spouse ? 2 : 1.6,
@@ -614,7 +677,13 @@ window.Family = (function () {
         var g = state.graph;
         g.on('node:click', function (e) {
             var model = e.item && e.item.getModel();
-            if (model && model.memberId) openMemberDrawer(model.memberId);
+            if (!model || !model.memberId) return;
+            // 折叠节点上的「+N」徽标：点它展开该分支的后代，而不是打开抽屉
+            if (model.collapsed && hitBadge(e, model)) {
+                expandNode(model.memberId);
+                return;
+            }
+            openMemberDrawer(model.memberId);
         });
         g.on('node:mouseenter', function (e) {
             var m = e.item && e.item.getModel();
@@ -674,11 +743,13 @@ window.Family = (function () {
                 var avX = -w / 2 + 8;
                 var avSize = 40;
                 var avY = -avSize / 2;
-                if (cfg.avatar) {
+                // 头像回退链：专属头像 → 相册首图 → 姓氏首字
+                var avatarImg = cfg.avatar || cfg.photoUrl || '';
+                if (avatarImg) {
                     group.addShape('image', {
                         attrs: {
                             x: avX, y: avY, width: avSize, height: avSize,
-                            img: cfg.avatar, radius: avSize / 2
+                            img: avatarImg, radius: avSize / 2
                         },
                         name: 'avatar',
                         draggable: true
@@ -771,23 +842,59 @@ window.Family = (function () {
             }
         }, 'single-node');
 
+        /**
+         * 正交折线路径（父子连线的唯一画法，draw 与 update 共用）。
+         * 抽出来是为了保证「刷新后」和「首次绘制」画出来的形状完全一致。
+         * @param cc 可选出线点：夫妻/共同育儿单元合并成一条线时，从单元中点出线
+         *           （TB 传 x，LR 传 y）；不传则从家长卡片边缘出线。
+         */
+        function orthoPath(s, t, cc) {
+            if (!s || !t) return null;
+            var hasCc = cc !== null && cc !== undefined && !isNaN(cc);
+            if (state.direction === 'LR') {
+                var sy = hasCc ? cc : s.y;
+                var midX = (s.x + t.x) / 2;
+                return [['M', s.x, sy], ['L', midX, sy], ['L', midX, t.y], ['L', t.x, t.y]];
+            }
+            var sx = hasCc ? cc : s.x;
+            var midY = (s.y + t.y) / 2;
+            return [['M', sx, s.y], ['L', sx, midY], ['L', t.x, midY], ['L', t.x, t.y]];
+        }
+
         /** 父子连线：正交折线（与后端导出保持一致的画法） */
         G6.registerEdge('family-edge', {
             draw: function (cfg, group) {
-                var s = cfg.startPoint;
-                var t = cfg.endPoint;
-                var path;
-                if (state.direction === 'LR') {
-                    var midX = (s.x + t.x) / 2;
-                    path = [['M', s.x, s.y], ['L', midX, s.y], ['L', midX, t.y], ['L', t.x, t.y]];
-                } else {
-                    var midY = (s.y + t.y) / 2;
-                    path = [['M', s.x, s.y], ['L', s.x, midY], ['L', t.x, midY], ['L', t.x, t.y]];
-                }
+                var path = orthoPath(cfg.startPoint, cfg.endPoint, cfg.coupleCenter) || [];
                 return group.addShape('path', {
                     attrs: { path: path, stroke: COLOR.parent, lineWidth: 1.6, lineAppendWidth: 8 },
                     name: 'edge-path'
                 });
+            },
+            /**
+             * 必须自定义 update：鼠标悬停会让节点加粗边框 + 阴影，节点包围盒随之变化，
+             * G6 会重算连线锚点并刷新边。若此时没有自定义 update，就会回退到基类（'line'）的
+             * update，把折线重画成一条直线 —— 表现为「鼠标一放上去连线就变直」。
+             */
+            update: function (cfg, item) {
+                var model = item.getModel();
+                var s = (cfg && cfg.startPoint) || model.startPoint;
+                var t = (cfg && cfg.endPoint) || model.endPoint;
+                var cc = (cfg && cfg.coupleCenter != null) ? cfg.coupleCenter : model.coupleCenter;
+                if (!s || !t) {
+                    // 兜底：模型里还没算出锚点时，退化用两端节点的中心坐标
+                    var src = item.getSource && item.getSource();
+                    var dst = item.getTarget && item.getTarget();
+                    if (src && dst) {
+                        s = src.getModel();
+                        t = dst.getModel();
+                    }
+                }
+                var path = orthoPath(s, t, cc);
+                if (!path) return;
+                var shape = item.getContainer().find(function (e) { return e.get('name') === 'edge-path'; });
+                if (!shape) return;
+                // 只改路径，保留当前描边/粗细（可能正处于 highlight 状态）
+                shape.attr('path', path);
             },
             setState: function (name, value, item) {
                 var group = item.getContainer();
@@ -806,9 +913,11 @@ window.Family = (function () {
     function yearText(cfg) {
         var b = cfg.birthYear || '';
         var d = cfg.deathYear || '';
-        if (!b && !d) return '生卒不详';
-        if (!d) return b + ' –';      // 在世：只标出生年，避免节点内截断
-        return b + ' – ' + d;
+        // 逝世状态以 deceased 标记为准；旧数据无该字段时退化为「有逝世日期即已逝世」
+        var deceased = !!(cfg.deceased || d);
+        var bs = b || '未知';   // 出生日期未填 → 未知
+        if (!deceased) return bs + ' –';               // 在世：只标出生年，避免节点内截断
+        return bs + ' – ' + (d || '未知');             // 已逝世：未填逝世日期 → 未知
     }
 
     function clip(s, max) {
@@ -864,6 +973,13 @@ window.Family = (function () {
                 ['sep', ''],
                 ['删除成员', 'delete']
             ];
+        // 折叠节点：置顶「展开后代」，方便鼠标不便精确点徽标时使用
+        if (m.collapsed && m.foldedDescendants > 0) {
+            items = [['展开后代（+' + m.foldedDescendants + '）', 'expand']].concat(items);
+        }
+        if (Object.keys(state.expanded).length && m.memberId && state.expanded[m.memberId]) {
+            items = [['收起该分支', 'collapse']].concat(items);
+        }
         menu.innerHTML = items.map(function (it) {
             if (it[0] === 'sep') return '<div class="fm-ctx-sep"></div>';
             var cls = it[1] === 'delete' ? 'fm-ctx-item danger' : 'fm-ctx-item';
@@ -893,6 +1009,8 @@ window.Family = (function () {
             case 'view':
             case 'edit': openMemberForm(memberId); break;
             case 'center': focusMember(memberId); break;
+            case 'expand': expandNode(memberId); break;
+            case 'collapse': delete state.expanded[memberId]; loadTree(); break;
             case 'spouse': openRelationForm(memberId, 'SPOUSE', '添加配偶'); break;
             case 'child': openRelationForm(memberId, 'CHILD', '添加子女'); break;
             case 'parent': openRelationForm(memberId, 'PARENT', '添加父母'); break;
@@ -926,12 +1044,19 @@ window.Family = (function () {
     // 成员表单（新增 / 编辑）
     // ======================================================================
 
-    function openMemberForm(memberId) {
+    /**
+     * 成员表单（新增 / 编辑）。
+     * @param memberId 有值=编辑，空=新增
+     * @param onSaved  可选回调 (newMemberId, name)，用于在「添加亲属」流程里把新建的人回填到下拉
+     */
+    function openMemberForm(memberId, onSaved) {
         var isEdit = !!memberId;
         var title = isEdit ? '编辑成员资料' : '新增家族成员';
         var save = function (mask) {
             var birth = val('fm-m-birth');
-            var death = val('fm-m-death');
+            var deceasedEl = document.getElementById('fm-m-deceased');
+            var deceased = !!(deceasedEl && deceasedEl.checked);
+            var death = deceased ? val('fm-m-death') : '';   // 未勾选一律视为在世，不提交忌日
             if (birth && death && death < birth) { notify('逝世日期不能早于出生日期'); return; }
             var body = {
                 id: isEdit ? Number(memberId) : null,
@@ -939,6 +1064,7 @@ window.Family = (function () {
                 name: val('fm-m-name'),
                 gender: Number(val('fm-m-gender') || 0),
                 birthDate: birth,
+                deceased: deceased,
                 deathDate: death,
                 bio: val('fm-m-bio'),
                 occupation: val('fm-m-occ'),
@@ -952,11 +1078,12 @@ window.Family = (function () {
             if (!body.name) { notify('请填写姓名'); return; }
             var btn = mask.querySelector('[data-act="ok"]');
             if (btn) btn.disabled = true;
-            API.memberSave(body).then(function () {
+            API.memberSave(body).then(function (savedId) {
                 notify(isEdit ? '资料已更新' : '成员已添加');
                 mask.remove();
                 loadTree();
                 if (state.detail && state.detail.id === Number(memberId)) openMemberDrawer(Number(memberId));
+                if (onSaved) onSaved(savedId != null ? savedId : (isEdit ? Number(memberId) : null), body.name);
             }).catch(function (e) {
                 notify(e.message || '保存失败');
                 if (btn) btn.disabled = false;
@@ -969,6 +1096,12 @@ window.Family = (function () {
             set('fm-m-gender', d.gender !== undefined && d.gender !== null ? d.gender : 0);
             set('fm-m-birth', fmtDate(d.birthDate));
             set('fm-m-death', fmtDate(d.deathDate));
+            var dz = document.getElementById('fm-m-deceased');
+            if (dz) {
+                dz.checked = !!(d.deceased || d.deathDate);
+                var di = document.getElementById('fm-m-death');
+                if (di) di.disabled = !dz.checked;
+            }
             set('fm-m-bio', d.bio);
             set('fm-m-occ', d.occupation);
             set('fm-m-home', d.hometown);
@@ -977,7 +1110,14 @@ window.Family = (function () {
             set('fm-m-remark', d.remark);
             set('fm-m-avatar', d.avatarUrl);
             set('fm-m-version', d.version);
+            renderAvatarPreview(d.avatarUrl);
         };
+        /** 头像缩略图预览：上传后立刻能看到图，不用等保存 */
+        function renderAvatarPreview(url) {
+            var box = document.getElementById('fm-m-avatar-preview');
+            if (!box) return;
+            box.innerHTML = url ? '<img src="' + esc(url) + '" alt="头像预览">' : '';
+        }
         var html =
             '<div class="fm-modal-title">' + title + '</div>' +
             '<div class="fm-form-row">' +
@@ -987,7 +1127,10 @@ window.Family = (function () {
             '</div>' +
             '<div class="fm-form-row">' +
                 '<div class="fm-field"><label>出生日期</label><input id="fm-m-birth" type="date" class="fm-input"></div>' +
-                '<div class="fm-field"><label>逝世日期（在世请留空）</label><input id="fm-m-death" type="date" class="fm-input"></div>' +
+                '<div class="fm-field"><label>逝世日期</label><input id="fm-m-death" type="date" class="fm-input" disabled></div>' +
+            '</div>' +
+            '<div class="fm-field fm-check-field">' +
+                '<label class="fm-check-label"><input type="checkbox" id="fm-m-deceased"> 已逝世（勾选后可填写逝世日期，不填则记为「未知」）</label>' +
             '</div>' +
             '<div class="fm-form-row">' +
                 '<div class="fm-field"><label>职业</label><input id="fm-m-occ" class="fm-input" maxlength="128"></div>' +
@@ -1011,7 +1154,8 @@ window.Family = (function () {
                     '<button class="fm-tb-btn" id="fm-m-up">上传</button>' +
                 '</div>' +
                 '<input type="hidden" id="fm-m-avatar"><input type="hidden" id="fm-m-version">' +
-                '<div class="fm-hint">上传后自动填入头像地址；也可直接在成员详情里拖拽上传照片。</div>' +
+                '<div class="fm-avatar-preview" id="fm-m-avatar-preview"></div>' +
+                '<div class="fm-hint">上传后即时生效（新增成员则在保存后生效）；也可在成员详情里点击头像更换。</div>' +
             '</div>' +
             '<div class="fm-modal-foot">' +
                 '<button class="fm-btn ghost" data-act="cancel">取消</button>' +
@@ -1020,17 +1164,42 @@ window.Family = (function () {
         var mask = modal(html, function (m) {
             m.querySelector('[data-act="cancel"]').onclick = function () { m.remove(); };
             m.querySelector('[data-act="ok"]').onclick = function () { save(m); };
+            // 逝世勾选联动：未勾选时禁用并清空逝世日期
+            var dz = m.querySelector('#fm-m-deceased');
+            var di = m.querySelector('#fm-m-death');
+            if (dz && di) {
+                var sync = function () {
+                    di.disabled = !dz.checked;
+                    if (!dz.checked) di.value = '';
+                };
+                dz.onchange = sync;
+                sync();
+            }
             var up = m.querySelector('#fm-m-up');
             if (up) up.onclick = function () {
                 var f = document.getElementById('fm-m-file');
                 if (!f || !f.files || !f.files[0]) { notify('请先选择图片'); return; }
+                var file = f.files[0];
+                if (isEdit) {
+                    // 编辑态：直接调用成员头像接口，上传即落库，无需再点保存
+                    notify('头像上传中…');
+                    API.memberAvatar(memberId, file).then(function (res) {
+                        var url = (res && res.url) || '';
+                        document.getElementById('fm-m-avatar').value = url;
+                        renderAvatarPreview(url);
+                        notify('头像已更新');
+                    }).catch(function (e) { notify(e.message || '头像上传失败'); });
+                    return;
+                }
+                // 新增态：成员还没有 id，先传到对象存储，随表单保存时一起写入
                 var fd = new FormData();
-                fd.append('file', f.files[0]);
+                fd.append('file', file);
                 fd.append('prefix', 'family/avatar');
                 upload('/api/file/upload', fd).then(function (d) {
                     if (d && d.code === 0 && d.data) {
                         document.getElementById('fm-m-avatar').value = d.data.url;
-                        notify('头像已上传，请点击保存');
+                        renderAvatarPreview(d.data.url);
+                        notify('头像已上传，保存后生效');
                     } else notify('上传失败');
                 }).catch(function () { notify('上传失败'); });
             };
@@ -1058,6 +1227,14 @@ window.Family = (function () {
     }
 
     function renderDrawer(d) {
+        // 关键：先移除可能残留的旧抽屉/灯箱。
+        // 否则多次打开会堆叠出同 id 的元素，document.getElementById 只会取到第一个（旧的、被盖住的），
+        // 于是照片渲染进旧容器、可见抽屉里「＋上传照片」按钮消失、上传后看不到新图。
+        var staleMask = document.getElementById('fm-drawer-mask');
+        if (staleMask) staleMask.remove();
+        var staleLb = document.getElementById('fm-lightbox');
+        if (staleLb) staleLb.remove();
+
         var wrap = document.createElement('div');
         wrap.className = 'fm-drawer-mask';
         wrap.id = 'fm-drawer-mask';
@@ -1066,17 +1243,25 @@ window.Family = (function () {
         });
 
         var genderTxt = d.gender === 1 ? '男' : (d.gender === 2 ? '女' : '未知');
-        var alive = !d.deathDate;
+        var alive = !(d.deceased || d.deathDate);
         var sub = genderTxt + ' · ' + (alive ? '在世' : '已故') +
-            (d.birthDate ? ' · ' + fmtDate(d.birthDate) + ' 年生' : '');
+            (d.birthDate ? ' · ' + fmtDate(d.birthDate) + ' 年生' : ' · 出生日期未知') +
+            (!alive ? (d.deathDate ? ' · ' + fmtDate(d.deathDate) + ' 逝世' : ' · 逝世日期未知') : '');
+
+        // 头像回退链：专属头像 → 相册首张照片 → 姓氏首字（见下方 avUrl 使用处）
+        var firstPhoto = (d.photos && d.photos.length) ? (d.photos[0].url || '') : '';
+        var avUrl = d.avatarUrl || firstPhoto;
 
         wrap.innerHTML =
             '<div class="fm-drawer">' +
                 '<div class="fm-drawer-head">' +
-                    '<div class="fm-drawer-avatar">' +
-                        (d.avatarUrl ? '<img src="' + esc(d.avatarUrl) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover" alt="">'
+                    '<div class="fm-drawer-avatar' + (d.writable ? ' fm-avatar-editable' : '') + '" id="fm-d-avatar"' +
+                        (d.writable ? ' title="点击更换头像"' : '') + '>' +
+                        (avUrl ? '<img src="' + esc(avUrl) + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover" alt="">'
                             : esc((d.name || '?').charAt(0))) +
+                        (d.writable ? '<div class="fm-avatar-tip">更换</div>' : '') +
                     '</div>' +
+                    (d.writable ? '<input type="file" id="fm-d-avatar-input" accept="image/*" style="display:none">' : '') +
                     '<div>' +
                         '<div class="fm-drawer-name">' + esc(d.name) + '</div>' +
                         '<div class="fm-drawer-sub">' + esc(sub) + '</div>' +
@@ -1096,6 +1281,11 @@ window.Family = (function () {
                     '<div class="fm-form-row">' +
                         '<div class="fm-field"><label>出生日期</label><input id="fm-d-birth" type="date" class="fm-input" value="' + fmtDate(d.birthDate) + '"' + (d.writable ? '' : ' disabled') + '></div>' +
                         '<div class="fm-field"><label>逝世日期</label><input id="fm-d-death" type="date" class="fm-input" value="' + fmtDate(d.deathDate) + '"' + (d.writable ? '' : ' disabled') + '></div>' +
+                    '</div>' +
+                    '<div class="fm-field fm-check-field">' +
+                        '<label class="fm-check-label"><input type="checkbox" id="fm-d-deceased"' +
+                            (d.deceased || d.deathDate ? ' checked' : '') + (d.writable ? '' : ' disabled') +
+                        '> 已逝世（未填写逝世日期则记为「未知」）</label>' +
                     '</div>' +
                     '<div class="fm-form-row">' +
                         '<div class="fm-field"><label>职业</label><input id="fm-d-occ" class="fm-input" value="' + esc(d.occupation) + '"' + (d.writable ? '' : ' disabled') + '></div>' +
@@ -1133,11 +1323,41 @@ window.Family = (function () {
         document.body.appendChild(wrap);
         wrap.querySelector('[data-act="close"]').onclick = function () { wrap.remove(); state.detail = null; };
 
+        // 逝世勾选联动：未勾选时禁用并清空逝世日期（只读成员不做联动，避免误改展示值）
+        var dDeceased = document.getElementById('fm-d-deceased');
+        var dDeath = document.getElementById('fm-d-death');
+        if (d.writable && dDeceased && dDeath) {
+            var syncDeceased = function () {
+                dDeath.disabled = !dDeceased.checked;
+                if (!dDeceased.checked) dDeath.value = '';
+            };
+            dDeceased.onchange = syncDeceased;
+            syncDeceased();
+        }
+
+        // 头像上传：点击头像选图 → 后端即时落库 → 刷新抽屉与树（上传即生效，无需再点保存）
+        var avEl = document.getElementById('fm-d-avatar');
+        var avInput = document.getElementById('fm-d-avatar-input');
+        if (d.writable && avEl && avInput) {
+            avEl.onclick = function () { avInput.click(); };
+            avInput.onchange = function () {
+                var f = avInput.files && avInput.files[0];
+                if (!f) return;
+                notify('头像上传中…');
+                API.memberAvatar(d.id, f).then(function () {
+                    notify('头像已更新');
+                    openMemberDrawer(d.id);
+                    loadTree();
+                }).catch(function (e) { notify(e.message || '头像上传失败'); });
+            };
+        }
+
         // 保存基础信息
         var saveBtn = document.getElementById('fm-d-save');
         if (saveBtn) saveBtn.onclick = function () {
             var birth = val('fm-d-birth');
-            var death = val('fm-d-death');
+            var deceased = !!(dDeceased && dDeceased.checked);
+            var death = deceased ? val('fm-d-death') : '';
             if (birth && death && death < birth) { notify('逝世日期不能早于出生日期'); return; }
             saveBtn.disabled = true;
             API.memberSave({
@@ -1145,6 +1365,7 @@ window.Family = (function () {
                 name: val('fm-d-name'),
                 gender: Number(val('fm-d-gender') || 0),
                 birthDate: birth,
+                deceased: deceased,
                 deathDate: death,
                 occupation: val('fm-d-occ'),
                 hometown: val('fm-d-home'),
@@ -1233,6 +1454,9 @@ window.Family = (function () {
         state.lbIndex = idx;
         var photos = state.photos || [];
         if (!photos.length) return;
+        // 同样先移除残留灯箱，避免同 id 叠加
+        var staleLb = document.getElementById('fm-lightbox');
+        if (staleLb) staleLb.remove();
         var box = document.createElement('div');
         box.className = 'fm-lightbox';
         box.id = 'fm-lightbox';
@@ -1308,45 +1532,443 @@ window.Family = (function () {
     }
 
     /** 添加亲属：可选择已有成员，或现场新建 */
+    // ======================================================================
+    // AI 助手面板（一键建谱 / 关系体检 / 智能补推 / 排版建议）
+    // 说明：坐标仍由后端 tidy-tree 算，这里只做「把族谱建对、理顺」。
+    // ======================================================================
+
+    function openAiPanel() {
+        var fid = state.family && state.family.id;
+        if (!fid) { notify('请先选择一个家族'); return; }
+        var html =
+            '<div class="fm-modal-title">✨ AI 助手</div>' +
+            '<div class="fm-ai-tabs">' +
+                '<button class="fm-ai-tab active" data-ai="build">一键建谱</button>' +
+                '<button class="fm-ai-tab" data-ai="audit">关系体检</button>' +
+                '<button class="fm-ai-tab" data-ai="infer">智能补推</button>' +
+                '<button class="fm-ai-tab" data-ai="layout">排版建议</button>' +
+            '</div>' +
+            '<div class="fm-ai-body" id="fm-ai-body"></div>' +
+            '<div class="fm-modal-foot">' +
+                '<button class="fm-btn ghost" data-act="cancel">关闭</button>' +
+            '</div>';
+        return modal(html, function (m) {
+            m.querySelector('[data-act="cancel"]').onclick = function () { m.remove(); };
+            var tabs = Array.prototype.slice.call(m.querySelectorAll('.fm-ai-tab'));
+            var body = m.querySelector('#fm-ai-body');
+            var render = function (name) {
+                tabs.forEach(function (t) {
+                    t.classList.toggle('active', t.getAttribute('data-ai') === name);
+                });
+                if (name === 'build') renderAiBuild(body, m);
+                else if (name === 'audit') renderAiAudit(body);
+                else if (name === 'infer') renderAiInfer(body, m);
+                else renderAiLayout(body, m);
+            };
+            tabs.forEach(function (t) {
+                t.onclick = function () { render(t.getAttribute('data-ai')); };
+            });
+            render('build');
+        });
+    }
+
+    /** 一键建谱：粘贴描述 → AI 解析 → 预览 */
+    function renderAiBuild(box, mask) {
+        var fid = state.family.id;
+        box.innerHTML =
+            '<div class="fm-hint">用一段话描述家族，AI 会解析出成员与关系，确认后再写入（不会直接改数据）。' +
+            '例：我爷爷孔祥德1930年生已故，奶奶肖启云1935年生，他们有两个儿子孔令兴、孔令魁。</div>' +
+            '<textarea id="fm-ai-text" class="fm-textarea" rows="6" placeholder="在这里输入或粘贴家族描述…"></textarea>' +
+            '<div style="margin-top:8px;text-align:right">' +
+                '<button class="fm-btn" id="fm-ai-parse">✨ 解析</button></div>' +
+            '<div class="fm-ai-result" id="fm-ai-result"></div>';
+        document.getElementById('fm-ai-parse').onclick = function () {
+            var txt = (document.getElementById('fm-ai-text').value || '').trim();
+            if (!txt) { notify('请先输入家族描述'); return; }
+            var btn = this;
+            btn.disabled = true;
+            btn.textContent = '解析中…';
+            var result = document.getElementById('fm-ai-result');
+            result.innerHTML = '<div class="fm-hint">AI 正在解析，请稍候…</div>';
+            API.aiParse(fid, txt).then(function (d) {
+                btn.disabled = false;
+                btn.textContent = '✨ 重新解析';
+                renderParsed(result, d, mask);
+            }).catch(function (e) {
+                btn.disabled = false;
+                btn.textContent = '✨ 解析';
+                result.innerHTML = '<div class="fm-warn">' + esc(e.message || '解析失败') + '</div>';
+            });
+        };
+    }
+
+    /** 解析结果预览表 */
+    function renderParsed(box, d, mask) {
+        var members = d.members || [];
+        var unions = d.unions || [];
+        if (!members.length) {
+            box.innerHTML = '<div class="fm-warn">没有解析出成员，换个说法再试试</div>';
+            return;
+        }
+        var refName = {};
+        members.forEach(function (m) { refName[m.ref] = m.name; });
+        var rows = members.map(function (m) {
+            var g = m.gender === 1 ? '男' : (m.gender === 2 ? '女' : '未知');
+            var tag = m.matchId
+                ? '<span class="fm-ai-tag ok">复用已有</span>'
+                : '<span class="fm-ai-tag">新建</span>';
+            return '<tr><td>' + esc(m.name) + '</td><td>' + g + '</td>' +
+                '<td>' + esc(m.birthDate || '未知') + '</td>' +
+                '<td>' + (m.deceased ? esc(m.deathDate || '未知') : '在世') + '</td>' +
+                '<td>' + tag + '</td></tr>';
+        }).join('');
+        var us = unions.map(function (u) {
+            var sp = (u.spouses || []).map(function (r) { return refName[r] || r; }).join(' + ') || '（单亲）';
+            var ch = (u.children || []).map(function (r) { return refName[r] || r; }).join('、');
+            return '<div class="fm-ai-union">' + esc(sp) + ' → 子女：' + esc(ch || '无') + '</div>';
+        }).join('');
+        box.innerHTML =
+            '<div class="fm-ai-sum">解析到 <b>' + members.length + '</b> 位成员、<b>' + unions.length + '</b> 段关系</div>' +
+            '<div class="fm-ai-table"><table>' +
+            '<thead><tr><th>姓名</th><th>性别</th><th>出生</th><th>逝世</th><th>处理</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody></table></div>' +
+            (us ? '<div class="fm-ai-unions">' + us + '</div>' : '') +
+            '<div class="fm-hint">确认无误后再写入。同名成员会自动复用，不会重复创建。</div>' +
+            '<div style="margin-top:8px;text-align:right">' +
+            '<button class="fm-btn" id="fm-ai-apply">写入族谱</button></div>';
+        document.getElementById('fm-ai-apply').onclick = function () {
+            var fresh = members.filter(function (m) { return !m.matchId; }).length;
+            confirmBox('确认写入',
+                '<div>将新建 <b>' + fresh + '</b> 位成员，复用 <b>' + (members.length - fresh) +
+                '</b> 位，并建立 <b>' + unions.length + '</b> 段关系。</div>',
+                '写入', function () {
+                    var btn = document.getElementById('fm-ai-apply');
+                    if (btn) { btn.disabled = true; btn.textContent = '写入中…'; }
+                    API.aiApply(state.family.id, { members: members, unions: unions }).then(function (r) {
+                        notify('已写入：新建 ' + r.createdMembers + ' 人，复用 ' + r.reusedMembers + ' 人');
+                        mask.remove();
+                        loadTree();
+                    }).catch(function (e) {
+                        if (btn) { btn.disabled = false; btn.textContent = '写入族谱'; }
+                        notify(e.message || '写入失败');
+                    });
+                });
+        };
+    }
+
+    /** 关系体检 */
+    function renderAiAudit(box) {
+        box.innerHTML = '<div class="fm-hint">正在体检…</div>';
+        API.aiAudit(state.family.id).then(function (d) {
+            var issues = d.issues || [];
+            var lv = { ERROR: '错', WARN: '疑', INFO: '提' };
+            var list = issues.map(function (it) {
+                return '<div class="fm-ai-item ' + String(it.level).toLowerCase() + '">' +
+                    '<span class="fm-ai-badge">' + (lv[it.level] || '·') + '</span>' +
+                    '<div><div class="fm-ai-msg">' + esc(it.message) + '</div>' +
+                    '<div class="fm-ai-sug">' + esc(it.suggestion || '') + '</div></div></div>';
+            }).join('');
+            box.innerHTML =
+                '<div class="fm-ai-sum">' + esc(d.summary || '') + '</div>' +
+                (issues.length ? list : '<div class="fm-hint">没有发现问题 👍</div>') +
+                '<div style="margin-top:8px;text-align:right">' +
+                '<button class="fm-btn ghost" id="fm-ai-reaudit">重新体检</button></div>';
+            var b = document.getElementById('fm-ai-reaudit');
+            if (b) b.onclick = function () { renderAiAudit(box); };
+        }).catch(function (e) {
+            box.innerHTML = '<div class="fm-warn">' + esc(e.message || '体检失败') + '</div>';
+        });
+    }
+
+    /** 智能补推 */
+    function renderAiInfer(box, mask) {
+        var fid = state.family.id;
+        box.innerHTML = '<div class="fm-hint">正在分析可补全的关系…</div>';
+        API.aiInfer(fid).then(function (list) {
+            list = list || [];
+            var rows = list.map(function (s) {
+                return '<div class="fm-ai-item"><span class="fm-ai-badge">补</span>' +
+                    '<div class="fm-ai-msg">' + esc(s.message) + '</div></div>';
+            }).join('');
+            box.innerHTML =
+                '<div class="fm-ai-sum">发现 <b>' + list.length + '</b> 条可自动补全的关系</div>' +
+                (list.length ? rows : '<div class="fm-hint">没有可自动补全的关系 👍</div>') +
+                (list.length ? '<div style="margin-top:8px;text-align:right">' +
+                    '<button class="fm-btn" id="fm-ai-infer-apply">全部应用</button></div>' : '');
+            var b = document.getElementById('fm-ai-infer-apply');
+            if (b) b.onclick = function () {
+                b.disabled = true;
+                b.textContent = '应用中…';
+                API.aiInferApply(fid, null).then(function (r) {
+                    notify('已应用 ' + (r.applied || 0) + ' 条');
+                    mask.remove();
+                    loadTree();
+                }).catch(function (e) {
+                    b.disabled = false;
+                    b.textContent = '全部应用';
+                    notify(e.message || '应用失败');
+                });
+            };
+        }).catch(function (e) {
+            box.innerHTML = '<div class="fm-warn">' + esc(e.message || '分析失败') + '</div>';
+        });
+    }
+
+    /** 排版建议（纯规则，不调模型） */
+    function renderAiLayout(box, mask) {
+        var fid = state.family.id;
+        box.innerHTML = '<div class="fm-hint">正在分析规模…</div>';
+        API.aiLayout(fid).then(function (d) {
+            var dirName = d.direction === 'LR' ? '横向（左父右子）' : '纵向（上父下子）';
+            var fold = d.maxDepthSuggest > 0 ? ('折叠到 ' + d.maxDepthSuggest + ' 代') : '不折叠';
+            box.innerHTML =
+                '<div class="fm-ai-sum">共 <b>' + d.memberCount + '</b> 人 / <b>' + d.maxDepth +
+                '</b> 代，同辈最多 <b>' + d.maxWidth + '</b> 人</div>' +
+                '<div class="fm-ai-item"><span class="fm-ai-badge">荐</span>' +
+                '<div><div class="fm-ai-msg">建议用' + dirName + '，' + fold + '</div>' +
+                '<div class="fm-ai-sug">' + esc(d.reason || '') + '</div></div></div>' +
+                '<div style="margin-top:8px;text-align:right">' +
+                '<button class="fm-btn" id="fm-ai-layout-apply">应用建议</button></div>';
+            document.getElementById('fm-ai-layout-apply').onclick = function () {
+                state.direction = d.direction;
+                state.depth = d.maxDepthSuggest || 0;
+                state.expanded = {};
+                mask.remove();
+                loadTree();
+                notify('已应用排版建议：' + dirName + '，' + fold);
+            };
+        }).catch(function (e) {
+            box.innerHTML = '<div class="fm-warn">' + esc(e.message || '分析失败') + '</div>';
+        });
+    }
+
     function openRelationForm(memberId, type, title) {
         var familyId = state.family && state.family.id;
         API.tree(familyId, state.direction, 0, [], state.shareToken).then(function (vo) {
-            var options = (vo.nodes || []).map(function (n) {
+            var isChild = (type === 'CHILD' || type === 'ADOPTED_CHILD');
+            var isParent = (type === 'PARENT' || type === 'STEP_PARENT');
+            var stepMode = (type === 'STEP_PARENT');
+            var nodes = vo.nodes || [];
+            var edges = vo.edges || [];
+            var options = nodes.map(function (n) {
                 return '<option value="' + n.memberId + '">' + esc(n.name) + '</option>';
             }).join('');
+
+            /**
+             * 取某人「唯一的配偶」：选中父亲后用它自动补位母亲（或反之）。
+             * 只有恰好一位配偶时才自动补位；多位或零位都不猜，避免误判。
+             * 已离异（EX_SPOUSE）不算，避免把前配偶默认成另一位家长。
+             */
+            function soleSpouse(id) {
+                if (!id) return null;
+                var found = [];
+                edges.forEach(function (e) {
+                    if (e.type !== 'SPOUSE') return;
+                    var s = Number(e.source), t = Number(e.target);
+                    if (s === Number(id)) found.push(t);
+                    else if (t === Number(id)) found.push(s);
+                });
+                var uniq = found.filter(function (v, i) { return found.indexOf(v) === i; });
+                return uniq.length === 1 ? uniq[0] : null;
+            }
+
+            // 选择「＋新建…」时打开与「新增成员」完全相同的完整资料表单
+            var NEW_OPT = '<option value="__new__">＋ 新建…（完整资料）</option>';
+
+            /** 性别后缀，帮用户一眼分辨，避免选错父亲 / 母亲 */
+            function genderTag(g) {
+                return g === 1 ? '（男）' : (g === 2 ? '（女）' : '（性别未知）');
+            }
+
+            /**
+             * 家长候选（按角色过滤）：
+             * 父亲候选排除女性成员，母亲候选排除男性成员，从源头杜绝「两个男的 / 两个女的」。
+             * 同时排除本人 —— 不能把自己设为自己的父母。
+             */
+            function parentOptions(role, defId) {
+                var list = nodes.filter(function (n) {
+                    if (Number(n.memberId) === Number(memberId)) return false;
+                    if (role === 1) return n.gender !== 2;   // 父亲：排除女
+                    return n.gender !== 1;                   // 母亲：排除男
+                });
+                return '<option value="">— 不指定 —</option>' + NEW_OPT + list.map(function (n) {
+                    return '<option value="' + n.memberId + '"' +
+                        (Number(n.memberId) === Number(defId) ? ' selected' : '') + '>' +
+                        esc(n.name) + genderTag(n.gender) + '</option>';
+                }).join('');
+            }
+
+            /** 已登记的父亲 / 母亲（同一角色不允许重复登记，这里直接置灰并提示先解除） */
+            var existing = { father: null, mother: null };
+            if (isParent) {
+                var edgeType = stepMode ? 'STEP_PARENT' : 'PARENT';
+                edges.forEach(function (e) {
+                    if (e.type !== edgeType) return;
+                    if (Number(e.target) !== Number(memberId)) return;
+                    var p = null;
+                    nodes.forEach(function (n) { if (Number(n.memberId) === Number(e.source)) p = n; });
+                    if (!p) return;
+                    if (p.gender === 2) existing.mother = p; else existing.father = p;
+                });
+            }
+
+            /** 家长下拉：默认选中 defId */
+            function parentSelect(defId) {
+                return '<option value="">— 不指定 —</option>' + NEW_OPT + nodes.map(function (n) {
+                    return '<option value="' + n.memberId + '"' +
+                        (Number(n.memberId) === Number(defId) ? ' selected' : '') + '>' + esc(n.name) + '</option>';
+                }).join('');
+            }
+
+            // 预填：本人是女性则默认占「母亲」，否则占「父亲」；另一方若为空则由唯一配偶补位
+            var selfNode = null;
+            nodes.forEach(function (n) { if (Number(n.memberId) === Number(memberId)) selfNode = n; });
+            var selfGender = selfNode ? selfNode.gender : 0;
+            var defFather = '';
+            var defMother = '';
+            if (isChild) {
+                if (selfGender === 2) defMother = memberId; else defFather = memberId;
+                if (defFather && !defMother) {
+                    var sp = soleSpouse(defFather);
+                    if (sp) defMother = sp;
+                } else if (defMother && !defFather) {
+                    var sp2 = soleSpouse(defMother);
+                    if (sp2) defFather = sp2;
+                }
+            }
+
+            var parentBlock = '';
+            if (isParent) {
+                var fDisabled = existing.father ? ' disabled' : '';
+                var mDisabled = existing.mother ? ' disabled' : '';
+                parentBlock =
+                    '<div class="fm-form-row">' +
+                        '<div class="fm-field"><label>父亲' + (existing.father ? '（已登记）' : '') + '</label>' +
+                            '<select id="fm-r-father" class="fm-select"' + fDisabled + '>' +
+                            parentOptions(1, existing.father ? existing.father.memberId : '') + '</select></div>' +
+                        '<div class="fm-field"><label>母亲' + (existing.mother ? '（已登记）' : '') + '</label>' +
+                            '<select id="fm-r-mother" class="fm-select"' + mDisabled + '>' +
+                            parentOptions(2, existing.mother ? existing.mother.memberId : '') + '</select></div>' +
+                    '</div>' +
+                    '<div class="fm-form-row">' +
+                        '<div class="fm-field"><label>或新建父亲（仅填姓名）</label>' +
+                            '<input id="fm-r-father-name" class="fm-input" placeholder="留空则不新建"></div>' +
+                        '<div class="fm-field"><label>或新建母亲（仅填姓名）</label>' +
+                            '<input id="fm-r-mother-name" class="fm-input" placeholder="留空则不新建"></div>' +
+                    '</div>' +
+                    ((existing.father || existing.mother)
+                        ? '<div class="fm-hint">已登记：' +
+                          (existing.father ? esc(existing.father.name) + '（' + (stepMode ? '继父' : '父亲') + '）' : '') +
+                          (existing.father && existing.mother ? '、' : '') +
+                          (existing.mother ? esc(existing.mother.name) + '（' + (stepMode ? '继母' : '母亲') + '）' : '') +
+                          '。同名角色不可重复登记，如需更换请先在成员详情里解除关系。</div>'
+                        : '');
+            }
+
             var html =
                 '<div class="fm-modal-title">' + esc(title) + '</div>' +
+                (isParent ? parentBlock :
                 '<div class="fm-field" style="margin-bottom:10px">' +
-                    '<label>选择已有成员</label>' +
-                    '<select id="fm-r-exist" class="fm-select"><option value="">— 新建一位成员 —</option>' + options + '</select>' +
+                    '<label>' + (isChild ? '孩子（选择已有成员）' : '选择已有成员') + '</label>' +
+                    '<select id="fm-r-exist" class="fm-select">' +
+                        '<option value="">— 新建一位成员（仅填姓名性别）—</option>' + NEW_OPT + options + '</select>' +
                 '</div>' +
                 '<div class="fm-form-row">' +
                     '<div class="fm-field"><label>新成员姓名</label><input id="fm-r-name" class="fm-input" placeholder="留空则表示选择已有成员"></div>' +
                     '<div class="fm-field"><label>性别</label><select id="fm-r-gender" class="fm-select">' +
                         '<option value="0">未知</option><option value="1">男</option><option value="2">女</option></select></div>' +
-                '</div>' +
+                '</div>') +
+                (isChild ?
+                '<div class="fm-form-row">' +
+                    '<div class="fm-field"><label>父亲</label><select id="fm-r-father" class="fm-select">' + parentSelect(defFather) + '</select></div>' +
+                    '<div class="fm-field"><label>母亲</label><select id="fm-r-mother" class="fm-select">' + parentSelect(defMother) + '</select></div>' +
+                '</div>' : '') +
                 '<div class="fm-field" style="margin-bottom:10px">' +
                     '<label>关系描述（可选）</label>' +
                     '<input id="fm-r-desc" class="fm-input" maxlength="255" placeholder="如：1988 年结婚 / 自幼过继">' +
                 '</div>' +
-                '<div class="fm-hint">提示：添加子女时，若本人已有配偶，配偶会自动登记为另一位家长（父 + 母两条关系）。</div>' +
+                '<div class="fm-hint">' + (isParent
+                    ? '可同时选择一位父亲和一位母亲（也可以只填其中一位）。父亲候选已排除女性成员、母亲候选已排除男性成员，后端还会再做一次校验；同一角色不能重复登记。'
+                    : (isChild
+                    ? '提示：父亲 / 母亲可从现有成员里选，也可选「＋新建…」当场创建（表单与「新增成员」完全相同）。只填一方时，若其有唯一配偶会自动补为另一方家长；两人都指定，则孩子同时指向这两人。都不指定则按「本人 + 唯一配偶」自动登记。'
+                    : '提示：可从现有成员里选，也可选「＋新建…」用完整资料表单当场创建。')) + '</div>' +
                 '<div class="fm-modal-foot">' +
                     '<button class="fm-btn ghost" data-act="cancel">取消</button>' +
                     '<button class="fm-btn" data-act="ok">确定</button>' +
                 '</div>';
             var mask = modal(html, function (m) {
                 m.querySelector('[data-act="cancel"]').onclick = function () { m.remove(); };
+                if (isChild) {
+                    // 选定一方家长后，若另一方还空着且该人有唯一配偶，自动补位
+                    var fSel = m.querySelector('#fm-r-father');
+                    var mSel = m.querySelector('#fm-r-mother');
+                    var fillOther = function (changed) {
+                        if (!fSel || !mSel) return;
+                        if (changed === 'father' && !mSel.value) {
+                            var sp = soleSpouse(fSel.value);
+                            if (sp) mSel.value = sp;
+                        } else if (changed === 'mother' && !fSel.value) {
+                            var sp2 = soleSpouse(mSel.value);
+                            if (sp2) fSel.value = sp2;
+                        }
+                    };
+                    if (fSel) fSel.onchange = function () { fillOther('father'); };
+                    if (mSel) mSel.onchange = function () { fillOther('mother'); };
+                }
+                // 「＋新建…」：打开与「新增成员」完全相同的完整资料表单，建好后回填到对应下拉
+                var openCreate = function (sel, label) {
+                    if (!sel) return;
+                    sel.value = ''; // 先复位，避免用户取消后卡在 __new__
+                    openMemberForm(null, function (newId, newName) {
+                        if (!newId) return;
+                        var opt = document.createElement('option');
+                        opt.value = String(newId);
+                        opt.text = newName || ('成员 ' + newId);
+                        sel.add(opt);
+                        sel.value = String(newId);
+                        notify(label + '已创建');
+                    });
+                };
+                var bindCreate = function (selId, label) {
+                    var sel = m.querySelector('#' + selId);
+                    if (!sel) return;
+                    sel.addEventListener('change', function () {
+                        if (sel.value === '__new__') openCreate(sel, label);
+                    });
+                };
+                if (!isParent) bindCreate('fm-r-exist', '成员');
+                if (isChild || isParent) {
+                    bindCreate('fm-r-father', '父亲');
+                    bindCreate('fm-r-mother', '母亲');
+                }
                 m.querySelector('[data-act="ok"]').onclick = function () {
-                    var exist = val('fm-r-exist');
+                    var exist = isParent ? '' : val('fm-r-exist');
                     var body = {
                         memberId: Number(memberId),
                         relationType: type,
-                        relativeId: exist ? Number(exist) : null,
+                        // __new__ 只是触发新建的哨兵值，不应作为成员 id 提交
+                        relativeId: (exist && exist !== '__new__') ? Number(exist) : null,
                         relationDesc: val('fm-r-desc')
                     };
-                    if (!exist) {
+                    if (isChild || isParent) {
+                        var fv = val('fm-r-father');
+                        var mv = val('fm-r-mother');
+                        body.fatherId = (fv && fv !== '__new__') ? Number(fv) : null;
+                        body.motherId = (mv && mv !== '__new__') ? Number(mv) : null;
+                    }
+                    if (isParent) {
+                        // 现场新建父亲 / 母亲（仅姓名），性别由后端按角色固定
+                        var fname = val('fm-r-father-name');
+                        var mname = val('fm-r-mother-name');
+                        if (fname) body.newFather = { name: fname };
+                        if (mname) body.newMother = { name: mname };
+                        if (!body.fatherId && !body.motherId && !body.newFather && !body.newMother) {
+                            notify('请至少选择或新建一位家长（父亲 / 母亲）');
+                            return;
+                        }
+                    } else if (!exist) {
                         var nm = val('fm-r-name');
-                        if (!nm) { notify('请填写姓名，或选择已有成员'); return; }
+                        if (!nm) { notify('请选择已有成员、填写姓名，或用「＋新建…」创建完整资料'); return; }
                         body.newRelative = { name: nm, gender: Number(val('fm-r-gender') || 0) };
                     }
                     var btn = this;

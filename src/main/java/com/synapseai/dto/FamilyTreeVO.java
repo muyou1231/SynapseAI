@@ -53,8 +53,11 @@ public class FamilyTreeVO {
 
         private String name;
 
-        /** 头像 URL（可能为空，前端回退为姓氏首字） */
+        /** 专属头像 URL（可能为空） */
         private String avatar;
+
+        /** 相册首图 URL（无专属头像时作为兜底展示，仍为空才回退姓氏首字） */
+        private String photoUrl;
 
         /** 性别：0=未知 1=男 2=女 */
         private Integer gender;
@@ -62,8 +65,11 @@ public class FamilyTreeVO {
         /** 出生年份（字符串，可能为 ""） */
         private String birthYear;
 
-        /** 逝世年份（空=在世） */
+        /** 逝世年份（已逝世且日期未知时为 ""） */
         private String deathYear;
+
+        /** 是否已逝世（true 且 deathYear 为空 = 逝世日期未知） */
+        private boolean deceased = false;
 
         /** 是否在世 */
         private boolean alive = true;
@@ -123,6 +129,14 @@ public class FamilyTreeVO {
             this.avatar = avatar;
         }
 
+        public String getPhotoUrl() {
+            return photoUrl;
+        }
+
+        public void setPhotoUrl(String photoUrl) {
+            this.photoUrl = photoUrl;
+        }
+
         public Integer getGender() {
             return gender;
         }
@@ -145,6 +159,14 @@ public class FamilyTreeVO {
 
         public void setDeathYear(String deathYear) {
             this.deathYear = deathYear;
+        }
+
+        public boolean isDeceased() {
+            return deceased;
+        }
+
+        public void setDeceased(boolean deceased) {
+            this.deceased = deceased;
         }
 
         public boolean isAlive() {
@@ -238,6 +260,21 @@ public class FamilyTreeVO {
         private String type;
 
         private String label;
+
+        /**
+         * 出线点（可空）。当同一孩子的多位家长同属一个家庭单元（夫妻 / 共同育儿）时，
+         * 多条父子边会合并为一条，本字段记录单元的中点：TB 方向为 x 坐标，LR 方向为 y 坐标。
+         * 前端与导出器据此从「两人中间」出线，而不是从其中一人的卡片边缘出线。
+         */
+        private Double coupleCenter;
+
+        public Double getCoupleCenter() {
+            return coupleCenter;
+        }
+
+        public void setCoupleCenter(Double coupleCenter) {
+            this.coupleCenter = coupleCenter;
+        }
 
         public String getSource() {
             return source;

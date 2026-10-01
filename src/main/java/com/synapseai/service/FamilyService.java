@@ -160,6 +160,14 @@ public class FamilyService {
     public Long saveMember(Long uid, MemberSaveReq req) {
         LocalDate birth = parseDate(req.getBirthDate(), "出生日期");
         LocalDate death = parseDate(req.getDeathDate(), "逝世日期");
+        // 逝世标记：优先取前端显式值；未传时按「是否填了逝世日期」推导，兼容旧客户端。
+        // 填了逝世日期一律视为已逝世；标记为在世则清空逝世日期，避免出现「在世却有忌日」的矛盾数据。
+        boolean deceased = req.getDeceased() != null ? req.getDeceased() : (death != null);
+        if (death != null) {
+            deceased = true;
+        } else if (!deceased) {
+            death = null;
+        }
         if (birth != null && death != null && death.isBefore(birth)) {
             throw new BizException("逝世日期不能早于出生日期");
         }
@@ -177,6 +185,7 @@ public class FamilyService {
             m.setAvatarUrl(req.getAvatarUrl() == null ? "" : req.getAvatarUrl());
             m.setGender(req.getGender() == null ? 0 : req.getGender());
             m.setBirthDate(birth);
+            m.setDeceased(deceased);
             m.setDeathDate(death);
             m.setBio(req.getBio());
             m.setOccupation(req.getOccupation() == null ? "" : req.getOccupation());
@@ -197,6 +206,7 @@ public class FamilyService {
         old.setAvatarUrl(req.getAvatarUrl() == null ? "" : req.getAvatarUrl());
         old.setGender(req.getGender() == null ? 0 : req.getGender());
         old.setBirthDate(birth);
+        old.setDeceased(deceased);
         old.setDeathDate(death);
         old.setBio(req.getBio());
         old.setOccupation(req.getOccupation() == null ? "" : req.getOccupation());
@@ -226,6 +236,7 @@ public class FamilyService {
         out.put("avatarUrl", m.getAvatarUrl());
         out.put("gender", m.getGender());
         out.put("birthDate", m.getBirthDate() == null ? "" : m.getBirthDate().toString());
+        out.put("deceased", m.getDeceased() != null && m.getDeceased());
         out.put("deathDate", m.getDeathDate() == null ? "" : m.getDeathDate().toString());
         out.put("bio", m.getBio() == null ? "" : m.getBio());
         out.put("occupation", m.getOccupation());
@@ -375,9 +386,17 @@ public class FamilyService {
         String type = req.getRelationType();
         String desc = req.getRelationDesc() == null ? "" : req.getRelationDesc();
 
+        // 「添加父母」走独立的双亲分支：支持一次同时指定父亲 + 母亲，因此不强制要求 relativeId / newRelative
+        boolean parentMode = "PARENT".equals(type) || "STEP_PARENT".equals(type);
+
         // 对方：已有成员 or 现场新建
-        FamilyMember other;
-        if (req.getRelativeId() != null) {
+        FamilyMember other = null;
+        if (parentMode) {
+            // 兼容旧调用：仍可通过 relativeId / newRelative 只指定一位家长，按其性别判定是父还是母
+            if (req.getRelativeId() != null) {
+                other = requireSameFamily(req.getRelativeId(), f.getId(), "对方成员");
+            }
+        } else if (req.getRelativeId() != null) {
             other = memberMapper.selectById(req.getRelativeId());
             if (other == null) {
                 throw new BizException("对方成员不存在或已删除");
@@ -392,11 +411,12 @@ public class FamilyService {
             }
             other = createRelative(f.getId(), req.getNewRelative());
         }
-        if (Objects.equals(other.getId(), self.getId())) {
+        if (other != null && Objects.equals(other.getId(), self.getId())) {
             throw new BizException("不能与自己建立亲属关系");
         }
 
         List<FamilyRelation> all = relationMapper.listByFamily(f.getId());
+        Long resultId = other == null ? self.getId() : other.getId();
         switch (type) {
             case "SPOUSE" -> {
                 checkNotBlood(self.getId(), other.getId(), all, "不能与直系血亲（父母 / 子女）登记为配偶");
@@ -412,23 +432,175 @@ public class FamilyService {
             }
             case "CHILD", "ADOPTED_CHILD" -> {
                 boolean adopted = "ADOPTED_CHILD".equals(type);
-                // 不能把长辈登记为自己的子女（防环）
-                if (ancestors(self.getId(), all).contains(other.getId())) {
-                    throw new BizException("不能把长辈（祖先）登记为子女，会造成辈分循环");
+                if (req.getFatherId() != null || req.getMotherId() != null) {
+                    // 前端显式指定了父亲 / 母亲：以选中的两位家长各建一条父子边
+                    addChildWithParents(f.getId(), req.getFatherId(), req.getMotherId(), other, adopted, desc, all);
+                } else {
+                    // 未指定：沿用「本人 + 唯一配偶自动补位」，并防环（不能把长辈登记为子女）
+                    if (ancestors(self.getId(), all).contains(other.getId())) {
+                        throw new BizException("不能把长辈（祖先）登记为子女，会造成辈分循环");
+                    }
+                    addChild(f.getId(), self, other, adopted, desc, all);
                 }
-                addChild(f.getId(), self, other, adopted, desc, all);
             }
             case "PARENT", "STEP_PARENT" -> {
+                // 添加父母：可同时指定一位父亲 + 一位母亲（也可只给其一）
                 boolean step = "STEP_PARENT".equals(type);
-                // 不能把后代登记为自己的父母（防环）
-                if (descendants(self.getId(), all).contains(other.getId())) {
-                    throw new BizException("不能把晚辈（后代）登记为父母，会造成辈分循环");
+                List<Long> added = addParents(f, self, req, other, step, desc, all);
+                if (!added.isEmpty()) {
+                    resultId = added.get(added.size() - 1);
                 }
-                addParent(f.getId(), other, self, step, desc);
             }
             default -> throw new BizException("不支持的关系类型：" + type);
         }
-        return other.getId();
+        return resultId;
+    }
+
+    /**
+     * 添加父母：一次最多登记「一位父亲 + 一位母亲」。
+     * <p>
+     * 业务约束（用户明确要求）：
+     * <ol>
+     *   <li>可以同时选两个人，但只能是一父一母；</li>
+     *   <li>父亲必须是男性（或性别未知），母亲必须是女性（或性别未知）—— 两个男的 / 两个女的直接拒绝；</li>
+     *   <li>同一角色不能重复登记（已有父亲时再加一位父亲会被拒绝，需先解除）；</li>
+     *   <li>被登记为父母的人不能是本人的晚辈（防辈分循环）。</li>
+     * </ol>
+     *
+     * @param legacyOther 兼容旧调用（只传了 relativeId / newRelative）时的那位家长
+     * @return 本次关联上的家长 id 列表
+     */
+    private List<Long> addParents(Family f, FamilyMember child, RelationCreateReq req,
+                                  FamilyMember legacyOther, boolean step, String desc,
+                                  List<FamilyRelation> all) {
+        Long fatherId = req.getFatherId();
+        Long motherId = req.getMotherId();
+        String fatherType = step ? "STEP_FATHER" : "FATHER";
+        String motherType = step ? "STEP_MOTHER" : "MOTHER";
+
+        // 兼容旧调用：只传了一位家长时，按其性别判定角色
+        if (fatherId == null && motherId == null && req.getNewFather() == null && req.getNewMother() == null
+                && legacyOther != null) {
+            if (legacyOther.getGender() != null && legacyOther.getGender() == 2) {
+                motherId = legacyOther.getId();
+            } else {
+                fatherId = legacyOther.getId();
+            }
+        }
+
+        if (fatherId != null && Objects.equals(fatherId, motherId)) {
+            throw new BizException("父亲与母亲不能是同一人");
+        }
+        if (fatherId != null && Objects.equals(fatherId, child.getId())) {
+            throw new BizException("不能把自己设为自己的" + (step ? "继父" : "父亲"));
+        }
+        if (motherId != null && Objects.equals(motherId, child.getId())) {
+            throw new BizException("不能把自己设为自己的" + (step ? "继母" : "母亲"));
+        }
+
+        Set<Long> childDescendants = descendants(child.getId(), all);
+        List<Long> added = new ArrayList<>();
+
+        // ---- 父亲 ----
+        if (fatherId != null) {
+            FamilyMember father = requireSameFamily(fatherId, f.getId(), "所选父亲");
+            checkRoleGender(father, 1, step ? "继父" : "父亲");
+            checkDuplicateParent(child.getId(), fatherType, all, fatherId, step ? "继父" : "父亲");
+            if (childDescendants.contains(fatherId)) {
+                throw new BizException("不能把晚辈（后代）登记为" + (step ? "继父" : "父亲") + "，会造成辈分循环");
+            }
+            linkParent(f.getId(), fatherId, child, fatherType, false, desc);
+            added.add(fatherId);
+        }
+        // ---- 母亲 ----
+        if (motherId != null) {
+            FamilyMember mother = requireSameFamily(motherId, f.getId(), "所选母亲");
+            checkRoleGender(mother, 2, step ? "继母" : "母亲");
+            checkDuplicateParent(child.getId(), motherType, all, motherId, step ? "继母" : "母亲");
+            if (childDescendants.contains(motherId)) {
+                throw new BizException("不能把晚辈（后代）登记为" + (step ? "继母" : "母亲") + "，会造成辈分循环");
+            }
+            linkParent(f.getId(), motherId, child, motherType, false, desc);
+            added.add(motherId);
+        }
+
+        // ---- 现场新建父亲 / 母亲（性别按角色固定，避免选进两个同性）----
+        RelationCreateReq.NewRelative nf = req.getNewFather();
+        if (fatherId == null && nf != null && hasName(nf)) {
+            if (hasGenderConflict(nf, 1)) {
+                throw new BizException("新建的父亲性别应为男");
+            }
+            nf.setGender(1);
+            FamilyMember created = createRelative(f.getId(), nf);
+            linkParent(f.getId(), created.getId(), child, fatherType, false, desc);
+            added.add(created.getId());
+        }
+        RelationCreateReq.NewRelative nm = req.getNewMother();
+        if (motherId == null && nm != null && hasName(nm)) {
+            if (hasGenderConflict(nm, 2)) {
+                throw new BizException("新建的母亲性别应为女");
+            }
+            nm.setGender(2);
+            FamilyMember created = createRelative(f.getId(), nm);
+            linkParent(f.getId(), created.getId(), child, motherType, false, desc);
+            added.add(created.getId());
+        }
+
+        if (added.isEmpty()) {
+            throw new BizException("请至少选择或新建一位家长（父亲 / 母亲）");
+        }
+        return added;
+    }
+
+    /** 角色性别校验：男性成员不能被登记为母亲，女性成员不能被登记为父亲（性别未知则放行） */
+    private void checkRoleGender(FamilyMember m, int expectedGender, String role) {
+        Integer g = m.getGender();
+        if (g == null || g == 0) {
+            return; // 性别未知，不强行拒绝
+        }
+        if (g != expectedGender) {
+            throw new BizException("「" + m.getName() + "」的性别为"
+                    + (g == 1 ? "男" : "女") + "，不能被登记为" + role);
+        }
+    }
+
+    /**
+     * 同一角色不能重复登记（一个成员最多一位父亲 / 母亲；继父母同理）。
+     * <p>
+     * 例外：若传入的候选人<b>就是当前已登记的那位</b>，视为幂等操作直接放行 ——
+     * 常见场景是「已用添加子女建好父亲，后来想补登母亲」，此时用户会顺手把父亲也一起勾上，
+     * 这种情况下只应补登缺失的一方，而不是报错。
+     */
+    private void checkDuplicateParent(Long childId, String type, List<FamilyRelation> all,
+                                      Long candidateId, String role) {
+        for (FamilyRelation r : all) {
+            if (!Objects.equals(r.getMemberBId(), childId) || !type.equals(r.getRelationType())) {
+                continue;
+            }
+            if (Objects.equals(r.getMemberAId(), candidateId)) {
+                return; // 同一人，幂等
+            }
+            FamilyMember exist = memberMapper.selectById(r.getMemberAId());
+            throw new BizException("已登记" + role + "「" + (exist == null ? "未知成员" : exist.getName())
+                    + "」，如需更换请先解除原有关系");
+        }
+    }
+
+    private FamilyMember requireSameFamily(Long memberId, Long familyId, String label) {
+        FamilyMember m = memberMapper.selectById(memberId);
+        if (m == null || !Objects.equals(m.getFamilyId(), familyId)) {
+            throw new BizException(label + "不存在或不在本家族");
+        }
+        return m;
+    }
+
+    private static boolean hasName(RelationCreateReq.NewRelative nr) {
+        return nr != null && nr.getName() != null && !nr.getName().trim().isEmpty();
+    }
+
+    private static boolean hasGenderConflict(RelationCreateReq.NewRelative nr, int expected) {
+        Integer g = nr.getGender();
+        return g != null && g != 0 && g != expected;
     }
 
     /** 解除两人的全部关系（夫妻双向、父子反向边一并清理） */
@@ -537,11 +709,46 @@ public class FamilyService {
         List<FamilyMember> members = memberMapper.listByFamily(f.getId());
         List<FamilyRelation> relations = relationMapper.listByFamily(f.getId());
         FamilyTreeVO vo = FamilyTreeLayout.build(members, relations, direction, depth,
-                expanded == null ? Collections.emptySet() : expanded);
+                expanded == null ? Collections.emptySet() : expanded, firstPhotoMap(members));
         vo.setFamilyId(f.getId());
         vo.setFamilyName(f.getName());
         vo.setReadonly(readonly);
         return vo;
+    }
+
+    /**
+     * 批量取成员的「相册首图」，一次查询完成（避免逐成员 N+1）。
+     * 用途：族谱节点在成员没有专属头像时，用相册首图兜底展示，都没有才回退姓氏首字。
+     */
+    private Map<Long, String> firstPhotoMap(List<FamilyMember> members) {
+        Map<Long, String> map = new HashMap<>();
+        if (members == null || members.isEmpty()) {
+            return map;
+        }
+        List<Long> ids = new ArrayList<>();
+        for (FamilyMember m : members) {
+            if (m != null && m.getId() != null) {
+                ids.add(m.getId());
+            }
+        }
+        if (ids.isEmpty()) {
+            return map;
+        }
+        try {
+            List<Map<String, Object>> rows = photoMapper.firstPhotoByMembers(ids);
+            if (rows != null) {
+                for (Map<String, Object> r : rows) {
+                    Object mid = r.get("memberId");
+                    Object url = r.get("url");
+                    if (mid instanceof Number && url != null) {
+                        map.put(((Number) mid).longValue(), String.valueOf(url));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("查询相册首图失败，节点将回退显示姓氏：{}", e.getMessage());
+        }
+        return map;
     }
 
     // ==================================================================
@@ -699,8 +906,9 @@ public class FamilyService {
             item.put("avatarUrl", m.getAvatarUrl());
             item.put("gender", m.getGender());
             item.put("birthDate", m.getBirthDate() == null ? "" : m.getBirthDate().toString());
+            item.put("deceased", m.getDeceased() != null && m.getDeceased());
             item.put("deathDate", m.getDeathDate() == null ? "" : m.getDeathDate().toString());
-            item.put("alive", m.getDeathDate() == null);
+            item.put("alive", !(m.getDeceased() != null && m.getDeceased()));
             item.put("writable", isWritable(f, uid));
             out.add(item);
         }
@@ -819,8 +1027,17 @@ public class FamilyService {
         m.setFamilyId(familyId);
         m.setName(nr.getName().trim());
         m.setGender(nr.getGender() == null ? 0 : nr.getGender());
-        m.setBirthDate(parseDate(nr.getBirthDate(), "出生日期"));
-        m.setDeathDate(parseDate(nr.getDeathDate(), "逝世日期"));
+        LocalDate birth = parseDate(nr.getBirthDate(), "出生日期");
+        LocalDate death = parseDate(nr.getDeathDate(), "逝世日期");
+        boolean deceased = nr.getDeceased() != null ? nr.getDeceased() : (death != null);
+        if (death != null) {
+            deceased = true;
+        } else if (!deceased) {
+            death = null;
+        }
+        m.setBirthDate(birth);
+        m.setDeceased(deceased);
+        m.setDeathDate(death);
         m.setAvatarUrl(nr.getAvatarUrl() == null ? "" : nr.getAvatarUrl());
         memberMapper.insert(m);
         return m;
@@ -855,6 +1072,57 @@ public class FamilyService {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * 添加子女（显式指定父亲 / 母亲）。
+     * 与 {@link #addChild} 的区别：不再按「本人 + 唯一配偶」推导另一位家长，
+     * 而是对前端选中的两位家长各建一条 FATHER / MOTHER 边，
+     * 因此即使两位家长之间没有夫妻关系，也能正确指向这两个人。
+     */
+    private void addChildWithParents(Long familyId, Long fatherId, Long motherId, FamilyMember child,
+                                     boolean adopted, String desc, List<FamilyRelation> all) {
+        if (fatherId == null && motherId == null) {
+            throw new BizException("请至少指定一位家长（父亲或母亲）");
+        }
+        if (fatherId != null && Objects.equals(fatherId, child.getId())) {
+            throw new BizException("家长不能是孩子本人");
+        }
+        if (motherId != null && Objects.equals(motherId, child.getId())) {
+            throw new BizException("家长不能是孩子本人");
+        }
+        if (fatherId != null && Objects.equals(fatherId, motherId)) {
+            throw new BizException("父亲与母亲不能是同一人");
+        }
+        // 防环：被登记为家长的人不能是孩子的晚辈（后代）
+        Set<Long> childDescendants = descendants(child.getId(), all);
+        if (fatherId != null && childDescendants.contains(fatherId)) {
+            throw new BizException("不能把晚辈（后代）登记为父亲，会造成辈分循环");
+        }
+        if (motherId != null && childDescendants.contains(motherId)) {
+            throw new BizException("不能把晚辈（后代）登记为母亲，会造成辈分循环");
+        }
+        linkParent(familyId, fatherId, child, "FATHER", adopted, desc);
+        linkParent(familyId, motherId, child, "MOTHER", adopted, desc);
+    }
+
+    /** 建立「家长 → 子女」单向关系，并补上子女视角的反向边（儿子 / 女儿） */
+    private void linkParent(Long familyId, Long parentId, FamilyMember child, String parentType,
+                            boolean adopted, String desc) {
+        if (parentId == null) {
+            return;
+        }
+        FamilyMember p = memberMapper.selectById(parentId);
+        if (p == null || !Objects.equals(p.getFamilyId(), familyId)) {
+            throw new BizException("所选家长不存在或不在本家族");
+        }
+        insertOne(familyId, parentId, child.getId(), parentType, desc);
+        String back = child.getGender() == null ? null
+                : (child.getGender() == 2 ? (adopted ? "ADOPTED_DAUGHTER" : "DAUGHTER")
+                                          : (adopted ? "ADOPTED_SON" : "SON"));
+        if (back != null) {
+            insertOne(familyId, child.getId(), parentId, back, desc);
         }
     }
 

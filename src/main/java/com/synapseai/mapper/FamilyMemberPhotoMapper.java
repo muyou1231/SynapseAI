@@ -35,4 +35,15 @@ public interface FamilyMemberPhotoMapper {
 
     @Select("SELECT COUNT(*) FROM family_member_photo WHERE member_id = #{memberId} AND deleted = 0")
     int countByMember(@Param("memberId") Long memberId);
+
+    /**
+     * 批量取成员的「相册首图」（按 sort_no、id 升序的第一张），供族谱节点在无专属头像时兜底展示。
+     * 一次查询取回，避免逐成员查询导致 N+1。
+     */
+    @Select("<script>SELECT p.member_id AS memberId, p.url AS url FROM family_member_photo p " +
+            "WHERE p.deleted = 0 AND p.id = (SELECT q.id FROM family_member_photo q " +
+            "WHERE q.member_id = p.member_id AND q.deleted = 0 ORDER BY q.sort_no ASC, q.id ASC LIMIT 1) " +
+            "AND p.member_id IN <foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>" +
+            "</script>")
+    List<java.util.Map<String, Object>> firstPhotoByMembers(@Param("ids") List<Long> ids);
 }

@@ -9,9 +9,9 @@ import java.util.List;
 @Mapper
 public interface FamilyMemberMapper {
 
-    @Insert("INSERT INTO family_member(family_id, user_id, name, avatar_url, gender, birth_date, death_date, " +
+    @Insert("INSERT INTO family_member(family_id, user_id, name, avatar_url, gender, birth_date, deceased, death_date, " +
             "bio, occupation, hometown, phone, address, remark, version, create_time, update_time) " +
-            "VALUES(#{familyId}, #{userId}, #{name}, #{avatarUrl}, #{gender}, #{birthDate}, #{deathDate}, " +
+            "VALUES(#{familyId}, #{userId}, #{name}, #{avatarUrl}, #{gender}, #{birthDate}, #{deceased}, #{deathDate}, " +
             "#{bio}, #{occupation}, #{hometown}, #{phone}, #{address}, #{remark}, 0, NOW(), NOW())")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(FamilyMember member);
@@ -32,7 +32,7 @@ public interface FamilyMemberMapper {
      * 返回 0 表示 version 已被他人改动，Service 层据此返回冲突提示。
      */
     @Update("UPDATE family_member SET name = #{name}, avatar_url = #{avatarUrl}, gender = #{gender}, " +
-            "birth_date = #{birthDate}, death_date = #{deathDate}, bio = #{bio}, occupation = #{occupation}, " +
+            "birth_date = #{birthDate}, deceased = #{deceased}, death_date = #{deathDate}, bio = #{bio}, occupation = #{occupation}, " +
             "hometown = #{hometown}, phone = #{phone}, address = #{address}, remark = #{remark}, " +
             "version = version + 1, update_time = NOW() " +
             "WHERE id = #{id} AND deleted = 0 AND version = #{version}")

@@ -31,12 +31,21 @@ public class MemberSaveReq {
     /** 性别：0=未知 1=男 2=女 */
     private Integer gender = 0;
 
-    /** 出生日期 yyyy-MM-dd */
-    @Pattern(regexp = "^\\d{4}-\\d{2}-\\d{2}$", message = "出生日期格式应为 yyyy-MM-dd")
+    /**
+     * 出生日期 yyyy-MM-dd。允许留空 —— 未填写时视为「未知」（前端显示「未知」）。
+     * 具体格式校验由 FamilyService.parseDate 负责，此处需放行空串，否则留空无法保存。
+     */
+    @Pattern(regexp = "^(|\\d{4}-\\d{2}-\\d{2})$", message = "出生日期格式应为 yyyy-MM-dd")
     private String birthDate;
 
-    /** 逝世日期 yyyy-MM-dd（空=在世） */
-    @Pattern(regexp = "^\\d{4}-\\d{2}-\\d{2}$", message = "逝世日期格式应为 yyyy-MM-dd")
+    /**
+     * 是否已逝世。true 表示已逝世；此时 deathDate 为空表示「逝世日期未知」。
+     * 不传时由 deathDate 是否有值推导，保证旧客户端兼容。
+     */
+    private Boolean deceased;
+
+    /** 逝世日期 yyyy-MM-dd（deceased=true 时可为空，表示日期未知） */
+    @Pattern(regexp = "^(|\\d{4}-\\d{2}-\\d{2})$", message = "逝世日期格式应为 yyyy-MM-dd")
     private String deathDate;
 
     @Size(max = 4000, message = "人物简介不能超过 4000 个字符")
@@ -114,6 +123,14 @@ public class MemberSaveReq {
 
     public void setBirthDate(String birthDate) {
         this.birthDate = birthDate;
+    }
+
+    public Boolean getDeceased() {
+        return deceased;
+    }
+
+    public void setDeceased(Boolean deceased) {
+        this.deceased = deceased;
     }
 
     public String getDeathDate() {

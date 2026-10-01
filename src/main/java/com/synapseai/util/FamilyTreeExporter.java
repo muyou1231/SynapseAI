@@ -82,7 +82,9 @@ public final class FamilyTreeExporter {
             // 2) 再画节点卡片
             Map<String, BufferedImage> avatarCache = new HashMap<>();
             for (FamilyTreeVO.TreeNode n : vo.getNodes()) {
-                drawNode(g, n, loadAvatar(n.getAvatar(), baseUrl, avatarCache));
+                // 头像回退链：专属头像 → 相册首图 → 姓氏首字（与前端节点保持一致）
+                String av = (n.getAvatar() != null && !n.getAvatar().isEmpty()) ? n.getAvatar() : n.getPhotoUrl();
+                drawNode(g, n, loadAvatar(av, baseUrl, avatarCache));
             }
             // 3) 标题
             drawTitle(g, vo, w);
@@ -202,7 +204,8 @@ public final class FamilyTreeExporter {
                 }
                 if (lr) {
                     int x1 = (int) (a.getX() + nw / 2.0);
-                    int y1 = (int) a.getY();
+                    // 合并出线：同单元多家长的边从单元中点（纵向）出线
+                    int y1 = (int) (e.getCoupleCenter() != null ? e.getCoupleCenter() : a.getY());
                     int x2 = (int) (b.getX() - nw / 2.0);
                     int y2 = (int) b.getY();
                     int midX = (x1 + x2) / 2;
@@ -210,7 +213,8 @@ public final class FamilyTreeExporter {
                     g.drawLine(midX, y1, midX, y2);
                     g.drawLine(midX, y2, x2, y2);
                 } else {
-                    int x1 = (int) a.getX();
+                    // 合并出线：同单元多家长的边从单元中点（横向）垂下，再分支到各孩子
+                    int x1 = (int) (e.getCoupleCenter() != null ? e.getCoupleCenter() : a.getX());
                     int y1 = (int) (a.getY() + nh / 2.0);
                     int x2 = (int) b.getX();
                     int y2 = (int) (b.getY() - nh / 2.0);
@@ -310,15 +314,14 @@ public final class FamilyTreeExporter {
     }
 
     private static String yearText(FamilyTreeVO.TreeNode n) {
-        String b = n.getBirthYear() == null ? "" : n.getBirthYear();
-        String d = n.getDeathYear() == null ? "" : n.getDeathYear();
-        if (b.isEmpty() && d.isEmpty()) {
-            return "生卒不详";
+        String b = n.getBirthYear() == null || n.getBirthYear().isEmpty() ? "未知" : n.getBirthYear();
+        String d = n.getDeathYear() == null || n.getDeathYear().isEmpty() ? "" : n.getDeathYear();
+        // 在世：只标出生年，避免截断（出生年缺失时显示「未知」）
+        if (!n.isDeceased()) {
+            return b + " –";
         }
-        if (d.isEmpty()) {
-            return b + " –";          // 在世：只标出生年，避免截断
-        }
-        return b + " – " + d;
+        // 已逝世：逝世日期未知时标注「未知」
+        return b + " – " + (d.isEmpty() ? "未知" : d);
     }
 
     private static String firstChar(String name) {

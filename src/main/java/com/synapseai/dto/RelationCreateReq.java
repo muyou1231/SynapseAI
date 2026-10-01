@@ -33,8 +33,27 @@ public class RelationCreateReq {
     @Size(max = 255, message = "关系描述不能超过 255 个字符")
     private String relationDesc;
 
+    /**
+     * 显式指定的父亲 id（可选）。
+     * - 添加子女时：以「指定的父亲 + 母亲」建立两条父子边；不传则沿用默认逻辑（本人 + 其唯一配偶自动补位）。
+     * - 添加父母时：作为父亲与本人建立 FATHER（继父母场景为 STEP_FATHER）关系，可与 motherId 同时传。
+     */
+    private Long fatherId;
+
+    /** 显式指定的母亲 id（可选），语义同 fatherId */
+    private Long motherId;
+
     /** relativeId 为空时，用它新建成员 */
     private NewRelative newRelative;
+
+    /**
+     * 添加父母时现场新建「父亲」（可选），与 fatherId 二选一。
+     * 性别会自动按父亲固定为男；若显式传入了女性，后端直接报错。
+     */
+    private NewRelative newFather;
+
+    /** 添加父母时现场新建「母亲」（可选），与 motherId 二选一，性别固定为女 */
+    private NewRelative newMother;
 
     /** 现场新建成员时的简要信息 */
     public static class NewRelative {
@@ -48,7 +67,10 @@ public class RelationCreateReq {
         /** yyyy-MM-dd */
         private String birthDate;
 
-        /** yyyy-MM-dd，空=在世 */
+        /** 是否已逝世（true 时 deathDate 可为空，表示逝世日期未知） */
+        private Boolean deceased;
+
+        /** yyyy-MM-dd，deceased=true 时可为空 */
         private String deathDate;
 
         private String avatarUrl;
@@ -75,6 +97,14 @@ public class RelationCreateReq {
 
         public void setBirthDate(String birthDate) {
             this.birthDate = birthDate;
+        }
+
+        public Boolean getDeceased() {
+            return deceased;
+        }
+
+        public void setDeceased(Boolean deceased) {
+            this.deceased = deceased;
         }
 
         public String getDeathDate() {
@@ -126,11 +156,43 @@ public class RelationCreateReq {
         this.relationDesc = relationDesc;
     }
 
+    public Long getFatherId() {
+        return fatherId;
+    }
+
+    public void setFatherId(Long fatherId) {
+        this.fatherId = fatherId;
+    }
+
+    public Long getMotherId() {
+        return motherId;
+    }
+
+    public void setMotherId(Long motherId) {
+        this.motherId = motherId;
+    }
+
     public NewRelative getNewRelative() {
         return newRelative;
     }
 
     public void setNewRelative(NewRelative newRelative) {
         this.newRelative = newRelative;
+    }
+
+    public NewRelative getNewFather() {
+        return newFather;
+    }
+
+    public void setNewFather(NewRelative newFather) {
+        this.newFather = newFather;
+    }
+
+    public NewRelative getNewMother() {
+        return newMother;
+    }
+
+    public void setNewMother(NewRelative newMother) {
+        this.newMother = newMother;
     }
 }
