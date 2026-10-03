@@ -543,9 +543,16 @@ window.Family = (function () {
         var px = (e.canvasX !== undefined && e.canvasX !== null) ? e.canvasX : e.x;
         var py = (e.canvasY !== undefined && e.canvasY !== null) ? e.canvasY : e.y;
         if (px === undefined || py === undefined) return false;
-        var dx = px - (model.x + NODE_W / 2 - 4);
-        var dy = py - (model.y + NODE_H / 2 - 2);
-        return dx * dx + dy * dy <= 16 * 16;
+        // ⚠️ e.x / e.canvasX 是「画布像素」坐标，model.x/y 是「模型」坐标。
+        //    render() 结尾调了 fitCenter()，画布上多了一个平移；用户滚轮缩放后还多一个倍率。
+        //    直接用像素去减模型点，命中永远落空 —— 于是点「+N」不会展开，只弹出成员抽屉（看着就像没反应）。
+        var p = px;
+        if (state.graph && typeof state.graph.getPointByCanvas === 'function') {
+            try { p = state.graph.getPointByCanvas(px, py); } catch (err) { p = { x: px, y: py }; }
+        }
+        var dx = p.x - (model.x + NODE_W / 2 - 4);
+        var dy = p.y - (model.y + NODE_H / 2 - 2);
+        return dx * dx + dy * dy <= 18 * 18;
     }
 
     /** 展开某个折叠节点的后代（会展开该分支的全部后代，而不是只多一层） */
@@ -1610,7 +1617,7 @@ window.Family = (function () {
         var fid = state.family.id;
         box.innerHTML =
             '<div class="fm-hint">用一段话描述家族，AI 会解析出成员与关系，确认后再写入（不会直接改数据）。' +
-            '例：我爷爷孔祥德1930年生已故，奶奶肖启云1935年生，他们有两个儿子孔令兴、孔令魁。</div>' +
+            '例：我爷爷 1930 年生已故，奶奶 1935 年生，他们有两个儿子，大儿子结婚后生了一子一女。</div>' +
             '<textarea id="fm-ai-text" class="fm-textarea" rows="6" placeholder="在这里输入或粘贴家族描述…"></textarea>' +
             '<div style="margin-top:8px;text-align:right">' +
                 '<button class="fm-btn" id="fm-ai-parse">✨ 解析</button></div>' +

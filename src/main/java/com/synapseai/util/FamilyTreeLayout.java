@@ -131,8 +131,8 @@ public final class FamilyTreeLayout {
 
         // ---------- 2. 并查集：配偶合并为「家庭单元」 ----------
         // ⚠️ 这里只合并「配偶」。早期版本还会合并「共同育儿的家长」与「亲家长辈」，
-        // 结果是把出嫁女儿的父亲（冯富忠）并进女婿父母的单元里 —— 冯贵英看起来就
-        // 变成孔令兴父母的女儿，纸上也就找不到"冯富忠 → 冯贵英"那条线（线的中点取了
+        // 结果是把出嫁女儿的父亲（女方父亲）并进女婿父母的单元里 —— 女方看起来就
+        // 变成男方的父母的女儿，纸上也就找不到"女方父亲 → 女方"那条线（线的中点取了
         // 整个合并单元的中心）。现在改为：每个人挂回自己亲生父母的单元下方，
         // 孩子的两边家长各垂一条线，见 7.5 节「多父居中」。
         Map<Long, Long> parent = new HashMap<>();
@@ -194,15 +194,68 @@ public final class FamilyTreeLayout {
                 break;
             }
         }
+        // 3.5 层号归一：任何一个孩子的「所有父母组」都必须刚好比他低一层。
+        // 上面是最长路径（只保证 depth(子) >= depth(父)+1），于是会出现一种常见丑态：
+        // 男方父母有记录、女方父母没记录（孤根）—— 妻子的爹妈被算成第 0 层，
+        // 比丈夫的爹妈高了一格，儿媳/女婿两家不同层。
+        // 例如男方的长子在第 1 层，而长子妻子的爹妈却成了孤根（第 0 层），
+        // 看上去就像妻家父母比夫家父母高一辈。这里把偏浅的父组整组压到与孩子差一层的那一行。
+        for (int i = 0; i < guard; i++) {
+            boolean changed = false;
+            for (Map.Entry<Long, LinkedHashSet<Long>> e : groupParents.entrySet()) {
+                Long child = e.getKey();
+                int dc = depth.getOrDefault(child, 0);
+                for (Long p : e.getValue()) {
+                    if (depth.getOrDefault(p, 0) < dc - 1) {
+                        depth.put(p, dc - 1); // 父母那一家往下一层对齐（夫妻的爹妈同层）
+                        changed = true;
+                    }
+                }
+            }
+            if (!changed) {
+                break;
+            }
+        }
 
-        // ---------- 4. 构建布局森林（每个单元只挂在一个父单元下） ----------
-        // 用 BFS「首次访问者即父」的方式生成树：天然无环，异常数据（互为父母）也不会导致布局递归栈溢出。
-        Map<Long, List<Long>> treeChildren = new HashMap<>();
+        // ---------- 4. 构建布局森林：每个孩子单元只挂在「真正养他的那一组」下 ----------
+        // ⚠️ 挂谁直接决定美不美观。早期用 BFS「谁先到谁当父」，谁先被遍历到谁就抢走这个孩子。
+        //    实测：男方长子的爹妈是 男方+女方（有血缘），可妻家那对爹妈是先到的根，
+        //    长子这一组就被挂到了妻家爹妈下面 —— 亲爹妈下方只剩男方次子一个人，
+        //    子女相对父母完全不对称，中间还拖出一根 800px 的横线。
+        //    所以这里先给每个孩子单元挑「布局父单元」：有血缘（真当过家长）的那一组优先，
+        //    实在没有（纯姻亲关系）才退而挂在别的父单元下。
+        Map<Long, Long> layoutParent = new HashMap<>();
+        for (Long c : groupMembers.keySet()) {
+            Long chosen = pickLayoutParent(c, groupParents, groupMembers, parentsOf, groupOf);
+            if (chosen != null) {
+                layoutParent.put(c, chosen);
+            }
+        }
+        Map<Long, List<Long>> treeChildren = new LinkedHashMap<>();
+        for (Map.Entry<Long, Long> e : layoutParent.entrySet()) {
+            treeChildren.computeIfAbsent(e.getValue(), k -> new ArrayList<>()).add(e.getKey());
+        }
+        // 断环（脏数据里「互为父母」才会出现）：成环就把兜回祖先身上那条边拆掉
+        for (Long s : groupMembers.keySet()) {
+            Set<Long> seen = new LinkedHashSet<>();
+            Long cur = s;
+            while (cur != null && layoutParent.containsKey(cur) && seen.add(cur)) {
+                Long nxt = layoutParent.get(cur);
+                if (seen.contains(nxt)) {           // cur 又追回了自己祖先 → 断掉这条边
+                    List<Long> lst = treeChildren.getOrDefault(nxt, new ArrayList<>());
+                    lst.remove(cur);
+                    if (lst.isEmpty()) {
+                        treeChildren.remove(nxt);
+                    }
+                    layoutParent.remove(cur);
+                    break;
+                }
+                cur = nxt;
+            }
+        }
         List<Long> roots = new ArrayList<>();
-        Set<Long> visited = new LinkedHashSet<>();
         for (Long g : groupMembers.keySet()) {
-            Set<Long> ps = groupParents.get(g);
-            if (ps == null || ps.isEmpty()) {
+            if (!layoutParent.containsKey(g)) {
                 roots.add(g);
             }
         }
@@ -210,39 +263,11 @@ public final class FamilyTreeLayout {
             // 极端情况：所有单元都互相是父（数据成环），取第一个单元兜底作为根
             roots.add(groupMembers.keySet().iterator().next());
         }
-        Deque<Long> bfs = new ArrayDeque<>();
-        for (Long r : roots) {
-            if (visited.add(r)) {
-                bfs.add(r);
-            }
-        }
-        while (!bfs.isEmpty()) {
-            Long g = bfs.poll();
-            for (Long c : groupChildren.getOrDefault(g, new LinkedHashSet<>())) {
-                if (visited.add(c)) {
-                    treeChildren.computeIfAbsent(g, k -> new ArrayList<>()).add(c);
-                    bfs.add(c);
-                }
-            }
-        }
-        // 环内未被访问到的单元（没有任何"无父入口"可达）补作根节点，保证不丢人
-        List<Long> extraRoots = new ArrayList<>();
-        for (Long g : groupMembers.keySet()) {
-            if (visited.add(g)) {
-                extraRoots.add(g);
-            }
-        }
-        if (!extraRoots.isEmpty()) {
-            Deque<Long> bfs2 = new ArrayDeque<>(extraRoots);
-            roots.addAll(extraRoots);
-            while (!bfs2.isEmpty()) {
-                Long g = bfs2.poll();
-                for (Long c : groupChildren.getOrDefault(g, new LinkedHashSet<>())) {
-                    if (visited.add(c)) {
-                        treeChildren.computeIfAbsent(g, k -> new ArrayList<>()).add(c);
-                        bfs2.add(c);
-                    }
-                }
+        // 反向索引：布局树里每个单元的父亲（洗版保对称时要用「同一屋檐下的兄弟姐妹」）
+        Map<Long, Long> treeParent = new HashMap<>();
+        for (Map.Entry<Long, List<Long>> e : treeChildren.entrySet()) {
+            for (Long c : e.getValue()) {
+                treeParent.put(c, e.getKey());
             }
         }
         roots.sort(Comparator.comparingLong(g -> groupMembers.get(g).get(0)));
@@ -343,7 +368,7 @@ public final class FamilyTreeLayout {
         }
 
         // ---------- 8.5 多父居中：把孩子摆到两家人中间 ----------
-        // 场景：冯贵英（冯富忠的女儿）同时是孔令兴的伴侣、孔德权/孔德志的母亲。
+        // 场景：女方（女方父亲的女儿）同时是男方的伴侣、男方长子/次子的母亲。
         // tidy-tree 只把「孩子单元」挂在一个父单元下（另外一组家长就成孤儿根被甩到边上），
         // 于是孩子看着像属于夫家、娘家那边只有一条对不上的线。
         // 这里按「辈分从浅到深」把「有多个父单元」的单元连同其整支后代，
@@ -377,14 +402,14 @@ public final class FamilyTreeLayout {
         Map<Long, Long> pinLinks = new HashMap<>();
 
         // 第二遍：直系对齐（单亲 + 独苗 → 拉成一条竖线）。
-        // 场景：冯贵英（冯富忠的女儿）嫁进孔家后，和丈夫孔令兴被并进同一个家庭单元
-        // （前配偶也要并到一起，才会画那条虚线），于是「冯富忠 → 冯贵英」在 tidy-tree 里
+        // 场景：女方（女方父亲的女儿）嫁进男方家后，和丈夫被并进同一个家庭单元
+        // （前配偶也要并到一起，才会画那条虚线），于是「女方父亲 → 女方」在 tidy-tree 里
         // 成了夫家那根主干上的一根侧枝，看着就像女儿跑到了亲家父母底下、自己没线。
         // 这里把「只有一位成员、孩子全在另一个单元」的家长，挪到那个孩子本人的正上方，
         // 父女/父子成一条笔直的竖线；只挪父母，孩子留在原位（孩子的横向由其子树决定）。
         // ⚠️ 必须放在洗版之后：洗版会把孩子单元往右推，先对齐再洗版的话，竖线又被拉歪了。
         // ⚠️ 位移方向是「把孩子组连同整支后代挪到家长下方」，而不是把家长搬到孩子头上：
-        //    家长往往是同层里另一家人的邻居（冯富忠与 孔祥德/肖启云同属第 0 层），
+        //    家长往往是同层里另一家人的邻居（女方父亲与 男方的爹妈同属第 0 层），
         //    把家长往左搬会直接撞上人家的卡片；反过来让孩子那支挪过去，两边都不挤。
         for (Long g : byDepth) {
             List<Long> gmembers = groupMembers.get(g);
@@ -430,48 +455,150 @@ public final class FamilyTreeLayout {
         }
 
         // 第三遍：同层去重叠（洗版）。
-        // 直系对齐把某一支挪过去之后，可能压到同层邻居身上 —— 例如冯贵英那组被挪到中间后，
-        // 正好盖在同期兄弟 孔令魁 的卡片上。这里按「层」把单元重排一遍，
+        // 直系对齐把某一支挪过去之后，可能压到同层邻居身上 —— 例如女方那组被挪到中间后，
+        // 正好盖在同期的兄弟卡片上。这里按「层」把单元重排一遍，
         // 保证同层单元之间至少留 MIN_GAP，卡片不会叠在一起。
         // ⚠️ 平移必须 withSubtree=true（连同整支后代一起挪）：否则父单元被推到同层邻居
-        // 右边，孩子还留在 tidy-tree 算的旧位置上，父子线斜得离谱（实测 冯贵英一组被挪到
-        // x=777，孩子却停在 474.5/670.5，看起来像属于夫家另一支）。
+        // 右边，孩子还留在 tidy-tree 算的旧位置上，父子线斜得离谱（实测女方一组被挪到
+        // 中点右侧，孩子却停在两侧，看起来像属于另一支）。
         // ⚠️ 被"钉"住的竖线两头一起平移（pinLinks），否则洗版一推，刚拉直的父子线又歪了。
+        // ⚠️ 冲突时平移的是「同一个父母养大的整块兄弟姐妹」，而不是出问题的那一张卡片：
+        //    只推一个孩子会把它从父母正下方挤走，同一对夫妻的子女就不对称了
+        //    （实测一个孩子被推到左边、另一对夫妻留在右边，中间拖一根长横线）。
+        //    整块平移 + 父母跟着走，tidy-tree 的「父母居中于子女」才不会被打散。
         int maxLv = 0;
         for (Long g : renderedGroups) {
             maxLv = Math.max(maxLv, depth.getOrDefault(g, 0));
         }
-        for (int lv = 0; lv <= maxLv; lv++) {
-            List<Long> row = new ArrayList<>();
-            for (Long g : renderedGroups) {
-                if (depth.getOrDefault(g, 0) == lv) {
-                    row.add(g);
-                }
-            }
-            if (row.size() < 2) {
-                continue;
-            }
-            row.sort(Comparator.comparingDouble((Long g) -> center.getOrDefault(g, 0.0))
-                    .thenComparingLong(g -> groupMembers.get(g).get(0)));
-            double rowCursor = Double.NEGATIVE_INFINITY;
-            for (Long g : row) {
-                int n = groupMembers.get(g).size();
-                double half = (n * NODE_W + (n - 1) * SPOUSE_GAP) / 2.0;
-                double c = center.getOrDefault(g, 0.0);
-                if (rowCursor != Double.NEGATIVE_INFINITY && c < rowCursor + MIN_GAP + half) {
-                    double target = rowCursor + MIN_GAP + half;
-                    double delta = target - c;
-                    shiftCrossAxis(g, delta, lr, true, treeChildren, renderedGroups, groupMembers, pos, center);
-                    Long pin = pinLinks.get(g);
-                    if (pin != null && !pin.equals(g)) {
-                        // 竖线另一头（家长）跟着一起挪，保持笔直
-                        shiftCrossAxis(pin, delta, lr, false, treeChildren, renderedGroups, groupMembers, pos, center);
+        // 洗版会整块推动，可能又踩到别的组，最多来回推 3 轮让它收敛
+        for (int pass = 0; pass < 3; pass++) {
+            boolean moved = false;
+            for (int lv = 0; lv <= maxLv; lv++) {
+                List<Long> row = new ArrayList<>();
+                for (Long g : renderedGroups) {
+                    if (depth.getOrDefault(g, 0) == lv) {
+                        row.add(g);
                     }
-                    c = center.getOrDefault(g, target);
                 }
-                rowCursor = c + half;
+                if (row.size() < 2) {
+                    continue;
+                }
+                row.sort(Comparator.comparingDouble((Long g) -> center.getOrDefault(g, 0.0))
+                        .thenComparingLong(g -> groupMembers.get(g).get(0)));
+                double rowCursor = Double.NEGATIVE_INFINITY;
+                for (Long g : row) {
+                    int n = groupMembers.get(g).size();
+                    double half = (n * NODE_W + (n - 1) * SPOUSE_GAP) / 2.0;
+                    double c = center.getOrDefault(g, 0.0);
+                    if (rowCursor != Double.NEGATIVE_INFINITY && c < rowCursor + MIN_GAP + half) {
+                        double target = rowCursor + MIN_GAP + half;
+                        double delta = target - c;
+                        Long par = treeParent.get(g);
+                        // ⚠️ withSubtree=false：这里要挪的是「同层的这几张卡片本身」。
+                        //    用 withSubtree=true 挪的其实是它的后代 —— 同层位置纹丝不动，
+                        //    只把孩子推远，父母与子女的相对关系越推越歪。
+                        Set<Long> block = new LinkedHashSet<>();
+                        block.add(g);
+                        if (par != null) {
+                            block.addAll(treeChildren.getOrDefault(par, Collections.<Long>emptyList()));
+                        }
+                        for (Long s : block) {
+                            if (renderedGroups.contains(s)) {
+                                shiftCrossAxis(s, delta, lr, false, treeChildren, renderedGroups, groupMembers, pos, center);
+                            }
+                        }
+                        if (par != null && renderedGroups.contains(par)) {
+                            // 父母跟着孩子一起挪，才继续居中于自己的子女（对称观感的关键）
+                            shiftCrossAxis(par, delta, lr, false, treeChildren, renderedGroups, groupMembers, pos, center);
+                        }
+                        // 钉住的竖线另一头（家长）跟着走，保持笔直
+                        Long pin = pinLinks.get(g);
+                        if (pin != null && !pin.equals(g)) {
+                            shiftCrossAxis(pin, delta, lr, false, treeChildren, renderedGroups, groupMembers, pos, center);
+                        }
+                        c = center.getOrDefault(g, target);
+                        moved = true;
+                    }
+                    rowCursor = c + half;
+                }
+            }
+            if (!moved) {
+                break;
             }
         }
+
+        // ---------- 8.6 亲子回中（兜底） ----------
+        // 洗版/直系对齐折腾完，最后统一校准一遍：每个父母单元回到「自己孩子们的中点」上。
+        // 这是「同父母的子女对称」的最后一道保险 —— 前面任何一步把某一侧推歪了，
+        // 这里都会把它拉回来（只挪父母自己，子女位置不动，对称关系不会被二次破坏）。
+        List<Long> centerOrder = new ArrayList<>(renderedGroups);
+        centerOrder.sort(Comparator.comparingLong((Long g) -> depth.getOrDefault(g, 0))
+                .thenComparingLong(g -> groupMembers.get(g).get(0)));
+        for (Long g : centerOrder) {
+            List<Long> cs = new ArrayList<>();
+            for (Long c : treeChildren.getOrDefault(g, Collections.<Long>emptyList())) {
+                if (renderedGroups.contains(c)) {
+                    cs.add(c);
+                }
+            }
+            if (cs.size() < 2) {
+                continue; // 只有一个孩子时由 tidy-tree / 直系对齐 负责居中
+            }
+            double first = center.getOrDefault(cs.get(0), 0.0);
+            double last = center.getOrDefault(cs.get(cs.size() - 1), 0.0);
+            double want = (first + last) / 2.0;
+            double d = want - center.getOrDefault(g, 0.0);
+            System.err.println("[8.6] g=" + g + " cs=" + cs + " want=" + want + " cur=" + center.getOrDefault(g, 0.0) + " d=" + d);
+            if (Math.abs(d) > 0.5) {
+                shiftCrossAxis(g, d, lr, false, treeChildren, renderedGroups, groupMembers, pos, center);
+                Long pin = pinLinks.get(g);
+                if (pin != null && !pin.equals(g)) {
+                    // 拉回父母时，跟这条竖线钉在一起的家长跟着一起挪
+                    shiftCrossAxis(pin, d, lr, false, treeChildren, renderedGroups, groupMembers, pos, center);
+                }
+            }
+        }
+
+        // ---------- 8.7 同层硬防重叠（兜底） ----------
+        // ⚠️ 洗版是沿着「布局树」推的：同一屋檐下的兄弟姐妹会被整块推开，可有的单元
+        //    （典型：只登记了孩子、自己没挂在树上，比如女方嫁过去以后那对岳父母）在布局树里
+        //    是孤立根，treeParent 为空 —— 洗版碰不到它，于是两家人卡片直接叠在一起
+        //    （实测第 1 层两组中心只差 28px，132 宽的卡片压成一团，页面上就是「挤到一块」）。
+        //    这里按层扫一遍：只要卡片相交，就把「没挂在树上的孤立单元」推开（挂树的单元
+        //    它有自己的对称约束，由洗版 + 回中负责，这里千万别动，否则对称又被推歪）。
+        declutterOrphans(depth, treeParent, groupMembers, renderedGroups, lr, pos, center);
+
+        // ---------- 8.8 最后再校准一次对称 ----------
+        // 8.7 只动「树外的孤立单元」，不会碰挂在树上的父母，所以这里再统一回中一遍，
+        // 保证「父母居中于子女」在任何分支顺序下都成立。
+        List<Long> restore = new ArrayList<>(renderedGroups);
+        restore.sort(Comparator.comparingLong((Long g) -> depth.getOrDefault(g, 0))
+                .thenComparingLong(g -> groupMembers.get(g).get(0)));
+        for (Long g : restore) {
+            List<Long> cs = new ArrayList<>();
+            for (Long c : treeChildren.getOrDefault(g, Collections.<Long>emptyList())) {
+                if (renderedGroups.contains(c)) {
+                    cs.add(c);
+                }
+            }
+            if (cs.size() < 2) {
+                continue;
+            }
+            double first = center.getOrDefault(cs.get(0), 0.0);
+            double last = center.getOrDefault(cs.get(cs.size() - 1), 0.0);
+            double d = ((first + last) / 2.0) - center.getOrDefault(g, 0.0);
+            if (Math.abs(d) > 0.5) {
+                shiftCrossAxis(g, d, lr, false, treeChildren, renderedGroups, groupMembers, pos, center);
+                Long pin = pinLinks.get(g);
+                if (pin != null && !pin.equals(g)) {
+                    shiftCrossAxis(pin, d, lr, false, treeChildren, renderedGroups, groupMembers, pos, center);
+                }
+            }
+        }
+
+        // 回中把父母拉回孩子中点，可能又顶到树外的孤立单元上 —— 再让孤立单元让一次位。
+        // 这一步只动孤立单元，挂树的父母不动，所以对称不会被破坏。
+        declutterOrphans(depth, treeParent, groupMembers, renderedGroups, lr, pos, center);
 
         // ---------- 9. 组装 VO ----------
         Map<Long, FamilyTreeVO.TreeNode> nodeMap = new LinkedHashMap<>();
@@ -515,7 +642,7 @@ public final class FamilyTreeLayout {
         //  · 同一单元的多位家长（夫妻）合并为一条，从两人中间垂下；
         //  · 家长分属不同单元（父亲家 / 母亲家 / 继父母）时，两边各垂一条。
         // ⚠️ coupleCenter 只取「本条关系涉及的这几位家长」的坐标均值，不能取整个单元中心：
-        //    否则单亲父亲（如冯富忠）会被并进女婿父母的单元，线从亲家桌底下来，
+        //    否则单亲父亲（例如只有一位家长且孩子已婚的那位）会被并进亲家父母的单元，线从亲家桌底下来，
         //    看上去就是「两人之间没有连线」。
         // 注意：这里的 parentsOf 是「孩子 -> 家长集合」；childrenOf 则是「家长 -> 孩子集合」，
         // 遍历时别搞反，否则父子边会把 source/target 画反、coupleCenter 取到孩子自己身上。
@@ -592,7 +719,7 @@ public final class FamilyTreeLayout {
         vo.setFoldedCount(folded);
         // 画布尺寸按「最终节点包围盒」算，而不是 tidy-tree 的跨度：
         // 8.5 的三遍后处理（直系对齐 / 洗版）会把整支后裔推出 tidy-tree 的区间，
-        // 照跨度给宽度会直接把最右侧那张卡片裁掉半张（实测 冯贵英 的右边被切 28px）。
+        // 照跨度给宽度会直接把最右侧那张卡片裁掉半张（实测最右边那张被切 28px）。
         double right = PADDING;
         double bottom = PADDING;
         for (double[] p : pos.values()) {
@@ -643,6 +770,50 @@ public final class FamilyTreeLayout {
             w += 1;
         }
         return w;
+    }
+
+    /**
+     * 给孩子单元挑「挂靠哪家」：数一数这家里有多少人是孩子单元成员的亲爹妈，
+     * 票最多的那家优先；打平时看组内排第一的「血脉方」（sortGroupMembers 把有爹妈/有孩子的
+     * 那位放最前）属于哪一家 —— 例如一组夫妻里两人各有一位亲爹妈（1:1 平手），
+     * 但排第一的那位属于夫家，这一组就该挂在夫家下面，亲爹妈下面才有两个孩子。
+     */
+    private static Long pickLayoutParent(Long childGroup,
+                                         Map<Long, LinkedHashSet<Long>> groupParents,
+                                         Map<Long, List<Long>> groupMembers,
+                                         Map<Long, LinkedHashSet<Long>> parentsOf,
+                                         Map<Long, Long> groupOf) {
+        List<Long> kids = groupMembers.getOrDefault(childGroup, Collections.<Long>emptyList());
+        if (kids.isEmpty()) {
+            return null;
+        }
+        Long primary = kids.get(0);
+        Long best = null;
+        int bestScore = 0;
+        boolean bestPrimary = false;
+        for (Long p : groupParents.getOrDefault(childGroup, new LinkedHashSet<Long>())) {
+            int score = 0;
+            boolean primaryBlood = false;
+            for (Long m : kids) {
+                for (Long par : parentsOf.getOrDefault(m, new LinkedHashSet<Long>())) {
+                    if (p.equals(groupOf.get(par))) {
+                        score++;
+                        if (m.equals(primary)) {
+                            primaryBlood = true;
+                        }
+                    }
+                }
+            }
+            if (score == 0) {
+                continue; // 这家跟这一组没有血缘，纯姻亲 —— 让位给血亲那家
+            }
+            if (best == null || score > bestScore || (score == bestScore && primaryBlood && !bestPrimary)) {
+                best = p;
+                bestScore = score;
+                bestPrimary = primaryBlood;
+            }
+        }
+        return best;
     }
 
     /** 后序：计算每个单元的"跨度"（TB 时为宽度，LR 时为高度） */
@@ -783,6 +954,98 @@ public final class FamilyTreeLayout {
      *
      * @param withSubtree true=连同后代整体平移（多父居中用），false=只挪自己（单子直连用）
      */
+    /**
+     * 同层硬防重叠（兜底）：按层把单元排序后从左到右扫，卡片相交时把「没挂在布局树上的
+     * 孤立单元」（treeParent 为空，典型是只登记了孩子、自己没并入任何一支的岳父母/亲家）
+     * 往右推开。挂在树上的单元有自己的对称约束，这里一律不动，交给洗版与亲子回中处理。
+     * 会在「回中前后」各调一次 —— 回中把父母拉回孩子中点时常会重新顶上孤立单元。
+     */
+    private static void declutterOrphans(Map<Long, Integer> depth,
+                                         Map<Long, Long> treeParent,
+                                         Map<Long, List<Long>> groupMembers,
+                                         Set<Long> renderedGroups,
+                                         boolean lr,
+                                         Map<Long, double[]> pos,
+                                         Map<Long, Double> center) {
+        int maxLv = 0;
+        for (Long g : renderedGroups) {
+            maxLv = Math.max(maxLv, depth.getOrDefault(g, 0));
+        }
+        for (int lv = 0; lv <= maxLv; lv++) {
+            List<Long> row = new ArrayList<>();
+            for (Long g : renderedGroups) {
+                if (depth.getOrDefault(g, 0) == lv) {
+                    row.add(g);
+                }
+            }
+            if (row.size() < 2) {
+                continue;
+            }
+            // 推开后可能连锁撞上别的孤立单元，来回收几轮
+            for (int pass = 0; pass < 3; pass++) {
+                row.sort(Comparator.comparingDouble((Long g) -> center.getOrDefault(g, 0.0))
+                        .thenComparingLong(g -> groupMembers.get(g).get(0)));
+                boolean moved = false;
+                double leftEdge = Double.NEGATIVE_INFINITY;
+                for (Long g : row) {
+                    int n = groupMembers.get(g).size();
+                    double half = (n * NODE_W + (n - 1) * SPOUSE_GAP) / 2.0;
+                    double c = center.getOrDefault(g, 0.0);
+                    // ⚠️ 挂树的单元照样参与「缝有多宽」的计算（否则它的卡片漏检，
+                    //    被推的孤立单元下一轮也算不出来了），只是不动它。
+                    if (treeParent.get(g) == null && c - half < leftEdge - 0.5) {
+                        double delta = (leftEdge + MIN_GAP + half) - c;
+                        shiftCrossAxis(g, delta, lr, false, null, renderedGroups, groupMembers, pos, center);
+                        c = center.getOrDefault(g, 0.0);
+                        moved = true;
+                    }
+                    leftEdge = Math.max(leftEdge, c + half + MIN_GAP);
+                }
+                // 再单独处理「孤立单元压在挂树单元身上」的情况：挂树的不能动（它要对着孩子
+                // 居中），只能让孤立单元让位，往移得更近的那一侧躲（左边挤就躲右边，反之亦然）。
+                for (Long g : row) {
+                    if (treeParent.get(g) != null) {
+                        continue;
+                    }
+                    int n = groupMembers.get(g).size();
+                    double half = (n * NODE_W + (n - 1) * SPOUSE_GAP) / 2.0;
+                    double c = center.getOrDefault(g, 0.0);
+                    double best = 0.0;
+                    double bestAbs = Double.POSITIVE_INFINITY;
+                    for (Long h : row) {
+                        if (h.equals(g) || treeParent.get(h) == null) {
+                            continue;              // 只有「挂树、不能动」的才是障碍
+                        }
+                        int m = groupMembers.get(h).size();
+                        double hHalf = (m * NODE_W + (m - 1) * SPOUSE_GAP) / 2.0;
+                        double hc = center.getOrDefault(h, 0.0);
+                        double need = half + hHalf + MIN_GAP;
+                        if (Math.abs(c - hc) >= need) {
+                            continue;              // 没压上
+                        }
+                        double dl = (hc - hHalf - MIN_GAP - half) - c;   // 躲到它左边
+                        double dr = (hc + hHalf + MIN_GAP + half) - c;   // 躲到它右边
+                        if (Math.abs(dl) < bestAbs) {
+                            bestAbs = Math.abs(dl);
+                            best = dl;
+                        }
+                        if (Math.abs(dr) < bestAbs) {
+                            bestAbs = Math.abs(dr);
+                            best = dr;
+                        }
+                    }
+                    if (bestAbs < Double.POSITIVE_INFINITY) {
+                        shiftCrossAxis(g, best, lr, false, null, renderedGroups, groupMembers, pos, center);
+                        moved = true;
+                    }
+                }
+                if (!moved) {
+                    break;
+                }
+            }
+        }
+    }
+
     private static void shiftCrossAxis(Long g,
                                        double delta,
                                        boolean lr,
