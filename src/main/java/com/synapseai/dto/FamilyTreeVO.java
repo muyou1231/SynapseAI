@@ -268,12 +268,29 @@ public class FamilyTreeVO {
          */
         private Double coupleCenter;
 
+        /**
+         * 是否为「侧亲线」（可空，默认 false）。
+         * 孩子的实际住处（跟配偶住在一起）离亲生父母很远时，父子线会横穿整张图；
+         * 这类线若和本支 sibling 的横梁画在同一高度，视觉上会连成一根通长横梁，
+         * 看上去像全屋檐下的孩子共同一对父母。这里标记出来：
+         * 前端与导出器把它下移一格 + 改用浅色虚线，两家人一眼就能分开。
+         */
+        private Boolean sideLink = false;
+
         public Double getCoupleCenter() {
             return coupleCenter;
         }
 
         public void setCoupleCenter(Double coupleCenter) {
             this.coupleCenter = coupleCenter;
+        }
+
+        public Boolean getSideLink() {
+            return sideLink;
+        }
+
+        public void setSideLink(Boolean sideLink) {
+            this.sideLink = sideLink;
         }
 
         public String getSource() {

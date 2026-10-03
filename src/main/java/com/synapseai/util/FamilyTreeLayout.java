@@ -53,6 +53,12 @@ public final class FamilyTreeLayout {
      */
     private static final boolean MULTI_PARENT_CENTER = false;
 
+    /**
+     * 「侧亲线」判定阈值：跨支的父子线横向还要再走这么远（约 1.6 张卡片宽）才算「横穿整图」，
+     * 才需要单独画法。跨支但本来就短（例如外祖父就坐在女儿正上方）仍按普通父子线画。
+     */
+    private static final double SIDE_LINK_SPAN = 1.6 * NODE_W;
+
     /** 长辈 → 晚辈 方向的关系类型（决定谁在上/左） */
     private static final Set<String> PARENT_TYPES = Set.of(
             "FATHER", "MOTHER", "STEP_FATHER", "STEP_MOTHER");
@@ -682,6 +688,26 @@ public final class FamilyTreeLayout {
                 edge.setTarget(String.valueOf(child));
                 edge.setType(hasStep ? "STEP_PARENT" : "PARENT");
                 edge.setCoupleCenter(ps.isEmpty() ? 0.0 : sum / ps.size());
+                // 侧亲线判定：孩子被排在了「不是自己亲生父母那一支」下面，连线得横穿别人家的 subtree。
+                // 典型场景：长子娶了另一家的女儿，女方跟着夫家这一支一起排，而她亲生父母的单元
+                // 没有别的孩子挂过来，成了孤根被甩到最右边 —— 于是「女方父母 → 女方」这条线
+                // 要从最右边一路拉回中间，正好压在「男方 → 孩子们」的横梁上，两根线首尾相连，
+                // 看上去像全屋檐的孩子都是同一对父母养的。
+                // ⚠️ 两个条件缺一不可：只看距离会把「祖父母 → 长子」这类正常的长横线也算进来
+                //    （夫妻中点离靠边的孩子本来就近 400px），父子线反而变成了虚线。
+                Long childGroup = groupOf.get(child);
+                // ps 里的家长都来自同一个单元（parentsByGroup 就是按单元分组的），取第一个即可
+                Long parentGroup = ps.isEmpty() ? null : groupOf.get(ps.get(0));
+                Long layoutPar = childGroup == null ? null : layoutParent.get(childGroup);
+                boolean crossBranch = layoutPar != null && parentGroup != null && !layoutPar.equals(parentGroup);
+                double[] cp = pos.get(child);
+                if (cp != null && crossBranch) {
+                    double cc = edge.getCoupleCenter();
+                    double railSpan = Math.abs(lr ? cc - cp[1] : cc - cp[0]);
+                    if (railSpan > SIDE_LINK_SPAN) {
+                        edge.setSideLink(true);
+                    }
+                }
                 vo.getEdges().add(edge);
             }
         }

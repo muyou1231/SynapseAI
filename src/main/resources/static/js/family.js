@@ -28,8 +28,11 @@ window.Family = (function () {
         parent: '#6B7F6E',
         spouse: '#A9714B',
         ex: '#B8B0A4',
-        highlight: '#C9973F'
+        highlight: '#C9973F',
+        inlaw: '#B3A796'   // 侧亲线（隔了很长一段的父子线）：浅赭灰
     };
+    // 侧亲线的横梁比本支 sibling 的横梁再往下让一格（像素），两根线才不会糊成一根通长横梁
+    var SIDE_RAIL_OFFSET = 42;
 
     var state = {
         view: 'list',          // list | tree | timeline
@@ -648,6 +651,7 @@ window.Family = (function () {
                     type: spouse ? 'line' : 'family-edge',
                     // 同单元多家长合并出线点：TB=单元中点 x，LR=单元中点 y（无则从家长卡片边缘出线）
                     coupleCenter: (e.coupleCenter === null || e.coupleCenter === undefined) ? null : e.coupleCenter,
+                    sideLink: !!e.sideLink,
                     style: {
                         stroke: color,
                         lineWidth: spouse ? 2 : 1.6,
@@ -854,26 +858,41 @@ window.Family = (function () {
          * 抽出来是为了保证「刷新后」和「首次绘制」画出来的形状完全一致。
          * @param cc 可选出线点：夫妻/共同育儿单元合并成一条线时，从单元中点出线
          *           （TB 传 x，LR 传 y）；不传则从家长卡片边缘出线。
+         * @param sideLink 是否「侧亲线」（孩子被排在另一支、连线要横穿整张图）。
+         *           非空的横梁要额外下移 SIDE_RAIL_OFFSET，否则和本支 sibling 的横梁
+         *           落在同一高度，两根线首尾相连看起来就像全屋檐的孩子共有一对父母。
          */
-        function orthoPath(s, t, cc) {
+        function orthoPath(s, t, cc, sideLink) {
             if (!s || !t) return null;
             var hasCc = cc !== null && cc !== undefined && !isNaN(cc);
+            var off = sideLink ? SIDE_RAIL_OFFSET : 0;
             if (state.direction === 'LR') {
                 var sy = hasCc ? cc : s.y;
-                var midX = (s.x + t.x) / 2;
+                var midX = ((s.x + t.x) / 2) + off;
                 return [['M', s.x, sy], ['L', midX, sy], ['L', midX, t.y], ['L', t.x, t.y]];
             }
             var sx = hasCc ? cc : s.x;
-            var midY = (s.y + t.y) / 2;
+            var midY = ((s.y + t.y) / 2) + off;
             return [['M', sx, s.y], ['L', sx, midY], ['L', t.x, midY], ['L', t.x, t.y]];
+        }
+
+        /** 父子边的常态配色：侧亲线用浅赭灰虚线，普通父子线用墨绿实线 */
+        function edgeBase(cfg) {
+            return (cfg && cfg.sideLink)
+                ? { stroke: COLOR.inlaw, lineWidth: 1.3, lineDash: [5, 4] }
+                : { stroke: COLOR.parent, lineWidth: 1.6, lineDash: null };
         }
 
         /** 父子连线：正交折线（与后端导出保持一致的画法） */
         G6.registerEdge('family-edge', {
             draw: function (cfg, group) {
-                var path = orthoPath(cfg.startPoint, cfg.endPoint, cfg.coupleCenter) || [];
+                var path = orthoPath(cfg.startPoint, cfg.endPoint, cfg.coupleCenter, cfg.sideLink) || [];
+                var base = edgeBase(cfg);
                 return group.addShape('path', {
-                    attrs: { path: path, stroke: COLOR.parent, lineWidth: 1.6, lineAppendWidth: 8 },
+                    attrs: {
+                        path: path, stroke: base.stroke, lineWidth: base.lineWidth,
+                        lineDash: base.lineDash, lineAppendWidth: 8
+                    },
                     name: 'edge-path'
                 });
             },
@@ -896,20 +915,31 @@ window.Family = (function () {
                         t = dst.getModel();
                     }
                 }
-                var path = orthoPath(s, t, cc);
+                var path = orthoPath(s, t, cc, model.sideLink);
                 if (!path) return;
                 var shape = item.getContainer().find(function (e) { return e.get('name') === 'edge-path'; });
                 if (!shape) return;
                 // 只改路径，保留当前描边/粗细（可能正处于 highlight 状态）
                 shape.attr('path', path);
+                var base = edgeBase(model);
+                var hl = item.hasState ? item.hasState('highlight') : false;
+                if (!hl) {
+                    shape.attr('stroke', base.stroke);
+                    shape.attr('lineWidth', base.lineWidth);
+                    shape.attr('lineDash', base.lineDash);
+                }
             },
             setState: function (name, value, item) {
                 var group = item.getContainer();
                 var p = group.find(function (e) { return e.get('name') === 'edge-path'; });
                 if (!p) return;
                 if (name === 'highlight') {
-                    p.attr('lineWidth', value ? 3 : 1.6);
-                    p.attr('stroke', value ? COLOR.highlight : COLOR.parent);
+                    var base = edgeBase(item.getModel());
+                    p.attr('lineWidth', value ? 3 : base.lineWidth);
+                    p.attr('stroke', value ? COLOR.highlight : base.stroke);
+                    if (!value) {
+                        p.attr('lineDash', base.lineDash);
+                    }
                 }
             }
         }, 'line');

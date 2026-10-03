@@ -41,6 +41,9 @@ public final class FamilyTreeExporter {
     private static final Color LINE_PARENT = new Color(0x6B, 0x7F, 0x6E);  // 父子连线
     private static final Color LINE_SPOUSE = new Color(0xA9, 0x71, 0x4B);  // 夫妻连线（赭石）
     private static final Color LINE_EX = new Color(0xB8, 0xB0, 0xA4);      // 离异虚线
+    private static final Color LINE_INLAW = new Color(0xB3, 0xA7, 0x96);   // 侧亲线（横穿整图的父子线）
+    /** 侧亲线的横梁比本支 sibling 的横梁再往下让的格数（像素） */
+    private static final int SIDE_RAIL_OFFSET = 42;
 
     /** 超清倍数：2 倍绘制再按需求缩放，保证导出清晰 */
     private static final int SCALE = 2;
@@ -193,36 +196,40 @@ public final class FamilyTreeExporter {
                 }
                 // 夫妻：同层相邻，直接连中心
                 g.drawLine((int) a.getX(), (int) a.getY(), (int) b.getX(), (int) b.getY());
-            } else {
-                // 父子：走正交折线（父 → 中途 → 子）
-                g.setColor(LINE_PARENT);
-                if ("STEP_PARENT".equals(type)) {
-                    g.setStroke(new BasicStroke(1.4f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL,
-                            0f, new float[]{5f, 4f}, 0f));
                 } else {
-                    g.setStroke(new BasicStroke(1.6f));
-                }
-                if (lr) {
-                    int x1 = (int) (a.getX() + nw / 2.0);
-                    // 合并出线：同单元多家长的边从单元中点（纵向）出线
-                    int y1 = (int) (e.getCoupleCenter() != null ? e.getCoupleCenter() : a.getY());
-                    int x2 = (int) (b.getX() - nw / 2.0);
-                    int y2 = (int) b.getY();
-                    int midX = (x1 + x2) / 2;
-                    g.drawLine(x1, y1, midX, y1);
-                    g.drawLine(midX, y1, midX, y2);
-                    g.drawLine(midX, y2, x2, y2);
-                } else {
-                    // 合并出线：同单元多家长的边从单元中点（横向）垂下，再分支到各孩子
-                    int x1 = (int) (e.getCoupleCenter() != null ? e.getCoupleCenter() : a.getX());
-                    int y1 = (int) (a.getY() + nh / 2.0);
-                    int x2 = (int) b.getX();
-                    int y2 = (int) (b.getY() - nh / 2.0);
-                    int midY = (y1 + y2) / 2;
-                    g.drawLine(x1, y1, x1, midY);
-                    g.drawLine(x1, midY, x2, midY);
-                    g.drawLine(x2, midY, x2, y2);
-                }
+                    // 父子：走正交折线（父 → 中途 → 子）
+                    // 侧亲线（孩子被排在另一支、连线横穿整张图）：横梁额外下移一格并改浅色虚线，
+                    // 否则与本支 sibling 的横梁同高首尾相连，看着像全屋檐共有一对父母。
+                    boolean sideLink = Boolean.TRUE.equals(e.getSideLink());
+                    int railOff = sideLink ? SIDE_RAIL_OFFSET : 0;
+                    g.setColor(sideLink ? LINE_INLAW : LINE_PARENT);
+                    if (sideLink || "STEP_PARENT".equals(type)) {
+                        g.setStroke(new BasicStroke(1.4f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL,
+                                0f, new float[]{5f, 4f}, 0f));
+                    } else {
+                        g.setStroke(new BasicStroke(1.6f));
+                    }
+                    if (lr) {
+                        int x1 = (int) (a.getX() + nw / 2.0);
+                        // 合并出线：同单元多家长的边从单元中点（纵向）出线
+                        int y1 = (int) (e.getCoupleCenter() != null ? e.getCoupleCenter() : a.getY());
+                        int x2 = (int) (b.getX() - nw / 2.0);
+                        int y2 = (int) b.getY();
+                        int midX = ((x1 + x2) / 2) + railOff;
+                        g.drawLine(x1, y1, midX, y1);
+                        g.drawLine(midX, y1, midX, y2);
+                        g.drawLine(midX, y2, x2, y2);
+                    } else {
+                        // 合并出线：同单元多家长的边从单元中点（横向）垂下，再分支到各孩子
+                        int x1 = (int) (e.getCoupleCenter() != null ? e.getCoupleCenter() : a.getX());
+                        int y1 = (int) (a.getY() + nh / 2.0);
+                        int x2 = (int) b.getX();
+                        int y2 = (int) (b.getY() - nh / 2.0);
+                        int midY = ((y1 + y2) / 2) + railOff;
+                        g.drawLine(x1, y1, x1, midY);
+                        g.drawLine(x1, midY, x2, midY);
+                        g.drawLine(x2, midY, x2, y2);
+                    }
             }
         }
         g.setStroke(new BasicStroke(1.6f));
